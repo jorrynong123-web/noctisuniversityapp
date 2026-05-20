@@ -42,7 +42,12 @@ function _apiErr(msg: string, status = 400): Response {
 
 // ─── AI route handler (LLM-powered, template fallback) ───────────────────────
 async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promise<Response> {
-  const creds = getStoredCreds();
+  // Prefer credentials passed inline from the frontend (user's own API key from Settings)
+  // over the stored fallback. This lets every NPC use the user's configured engine.
+  const inlineCreds = (body.userApiBase && body.userApiKey && body.userModel)
+    ? { apiBase: body.userApiBase as string, apiKey: body.userApiKey as string, model: body.userModel as string }
+    : null;
+  const creds = inlineCreds || getStoredCreds();
 
   if (sub === "npc-reply" || sub === "npc-initiate" || sub === "worship-dm" || sub === "prof-dm") {
     const isProfDM = sub === "prof-dm";
@@ -2482,7 +2487,7 @@ export default function Umbra() {
 
     init();
     const interval = setInterval(syncFromStorage, 5000);
-    const apiInterval = setInterval(fetchApiPosts, 8 * 60 * 1000); // 8 min — reduces compute costs
+    const apiInterval = setInterval(fetchApiPosts, 45 * 1000); // 45s — keep feed live with other users' posts
     return () => { clearInterval(interval); clearInterval(apiInterval); };
   }, [syncFromStorage]);
 
@@ -5078,7 +5083,7 @@ export default function Umbra() {
         fetch("/api/ai/npc-reply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: userMsg, username: user.un, relLevel, trentMemory: capturedMemory, ...(ACCTS[capturedConvId]?.autoReply && hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}) }),
+          body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: userMsg, username: user.un, relLevel, trentMemory: capturedMemory, ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}) }),
           signal: abortCtrl.signal,
         })
           .then(r2 => r2.json())
@@ -5143,6 +5148,7 @@ export default function Umbra() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profName: p.name,
+          profProfile: p,
           archetype: p.archetype || "clinical",
           personality: p.bio || p.name,
           dms: p.dms || [],
@@ -5152,6 +5158,7 @@ export default function Umbra() {
           favScore: p.favorability ?? 0,
           history: currentHistory,
           message: msg,
+          ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}),
         }),
       });
       const data = await res.json();
@@ -9558,7 +9565,7 @@ export default function Umbra() {
 
   const UniStudents = () => {
     const notable = Object.values(ACCTS).filter(
-      (s) => s.isSpecial && !s.isPet && !s.isRelief && !s.isFaculty
+      (s: any) => (s.isSpecial || s.personality) && !s.isPet && !s.isRelief && !s.isFaculty && s.tier !== "pet" && s.tier !== "relief" && s.tier !== "none"
     );
     return (
       <div>
@@ -17776,6 +17783,66 @@ export default function Umbra() {
             </div>
           ))}
         </div>
+        {/* ── AI ENGINE ──────────────────────────────────────────── */}
+        <div style={{ ...card, padding: 14, marginBottom: 10, borderColor: hasUserAiKey ? T.primary : T.border }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 16 }}>{hasUserAiKey ? "🔑" : "⚡"}</span>
+            <p style={{ ...lbl, margin: 0 }}>AI ENGINE</p>
+            {hasUserAiKey && <span style={{ marginLeft: "auto", fontSize: 10, color: T.primary, border: `1px solid ${T.primary}`, borderRadius: 10, padding: "2px 8px" }}>ACTIVE</span>}
+          </div>
+          <p style={{ fontSize: 11, color: T.muted, marginBottom: 10, lineHeight: 1.6 }}>
+            {hasUserAiKey
+              ? `Using ${(aiModel || "custom").split("/").pop()?.split("-").slice(0,3).join("-") || "your model"} for NPC & professor conversations.`
+              : "Add your own API key so NPCs and professors reply using real AI. Works with any OpenAI-compatible provider."}
+          </p>
+          {/* Provider presets */}
+          <p style={{ fontSize: 10, color: T.muted, marginBottom: 6, letterSpacing: "0.08em" }}>QUICK PRESETS</p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
+            {[
+              { name: "Groq (Free)", base: "https://api.groq.com/openai", model: "llama-3.1-8b-instant", hint: "Fast & free tier available" },
+              { name: "OpenRouter", base: "https://openrouter.ai/api/v1", model: "meta-llama/llama-3.1-8b-instruct:free", hint: "100+ models, free tier" },
+              { name: "Chutes AI", base: "https://llm.chutes.ai/v1", model: "deepseek-ai/DeepSeek-V3-0324", hint: "DeepSeek & more" },
+              { name: "NanoGPT", base: "https://nano-gpt.com/api/v1", model: "gpt-4o-mini", hint: "Pay-per-use credits" },
+              { name: "OpenAI", base: "https://api.openai.com/v1", model: "gpt-4o-mini", hint: "Official OpenAI API" },
+              { name: "Custom", base: "", model: "", hint: "Enter your own endpoint" },
+            ].map(p => (
+              <button key={p.name} type="button" className="b" onClick={() => {
+                if (p.base) { setAiApiBase(p.base); setAiModel(p.model); }
+              }} style={{ ...card, padding: "8px 10px", textAlign: "left", fontSize: 11, color: aiApiBase === p.base && p.base ? T.primary : T.text, borderColor: aiApiBase === p.base && p.base ? T.primary : T.border }}>
+                <div style={{ fontWeight: 700 }}>{p.name}</div>
+                <div style={{ fontSize: 9, color: T.muted, marginTop: 2 }}>{p.hint}</div>
+              </button>
+            ))}
+          </div>
+          {[
+            { label: "API ENDPOINT", val: aiApiBase, set: setAiApiBase, placeholder: "https://api.groq.com/openai", type: "url" as const },
+            { label: "API KEY", val: aiApiKey, set: setAiApiKey, placeholder: "sk-...", type: "password" as const },
+            { label: "MODEL", val: aiModel, set: setAiModel, placeholder: "llama-3.1-8b-instant", type: "text" as const },
+          ].map(({ label, val, set, placeholder, type }) => (
+            <div key={label} style={{ marginBottom: 8 }}>
+              <p style={{ fontSize: 10, color: T.muted, marginBottom: 3, letterSpacing: "0.08em" }}>{label}</p>
+              <input type={type} value={val} onChange={e => set(e.target.value)} placeholder={placeholder}
+                style={{ ...inp, fontSize: 12, fontFamily: type === "password" ? "monospace" : undefined }} />
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button type="button" className="b" onClick={() => {
+              saveAiCreds({ apiBase: aiApiBase.trim(), apiKey: aiApiKey.trim(), model: aiModel.trim() });
+              toast("✅ AI key saved — NPCs will now use your engine");
+            }} style={{ ...btn(true), flex: 1, padding: "10px", fontSize: 11 }}>SAVE AI KEY</button>
+            {hasUserAiKey && (
+              <button type="button" className="b" onClick={() => {
+                setAiApiBase(""); setAiApiKey(""); setAiModel("");
+                saveAiCreds({ apiBase: "", apiKey: "", model: "" });
+                toast("Switched to free AI");
+              }} style={{ ...btn(false), padding: "10px 14px", fontSize: 11, borderColor: T.muted, color: T.muted }}>CLEAR</button>
+            )}
+          </div>
+          <p style={{ fontSize: 10, color: T.muted, marginTop: 8, lineHeight: 1.6 }}>
+            Key stays on your device only — never sent to UMBRA servers. NPCs, professors, and auto-comments all use this engine.
+          </p>
+        </div>
+
         <button
           type="button"
           className="b"
