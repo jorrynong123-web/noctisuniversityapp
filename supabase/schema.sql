@@ -187,8 +187,7 @@ create index if not exists profiles_username_idx on public.profiles(lower(userna
 -- Confirms every existing account that is stuck in unconfirmed state.
 -- Safe to run multiple times.
 update auth.users
-  set email_confirmed_at = now(),
-      confirmed_at = now()
+  set email_confirmed_at = now()
   where email_confirmed_at is null;
 
 -- ── Auto-confirm trigger (future accounts) ────────────────────────────────────
@@ -203,8 +202,7 @@ security definer set search_path = auth, public
 as $$
 begin
   update auth.users
-    set email_confirmed_at = coalesce(email_confirmed_at, now()),
-        confirmed_at       = coalesce(confirmed_at, now())
+    set email_confirmed_at = coalesce(email_confirmed_at, now())
     where id = new.id;
   return new;
 end;
@@ -226,8 +224,7 @@ security definer set search_path = auth, public
 as $$
 begin
   update auth.users
-    set email_confirmed_at = coalesce(email_confirmed_at, now()),
-        confirmed_at       = coalesce(confirmed_at, now())
+    set email_confirmed_at = coalesce(email_confirmed_at, now())
     where id = uid;
 end;
 $$;
