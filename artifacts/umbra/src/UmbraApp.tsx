@@ -359,40 +359,55 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
         return new Response(JSON.stringify({ error: "Username already taken.", suggestion }), { status: 409, headers: { "Content-Type": "application/json" } });
       }
       const fakeEmail = `${(username as string).toLowerCase().replace(/[^a-z0-9]/g, "_")}@noctis.local`;
+      let userId: string | undefined;
+      // Try signUp first. If the auth user already exists (from a previous failed attempt),
+      // signUp returns user:null with no error — fall back to signIn to recover the id.
       const { data: authData, error: authErr } = await sb.auth.signUp({ email: fakeEmail, password: password as string });
-      if (authErr) return _apiErr(authErr.message, 400);
-      const userId = authData.user?.id;
-      if (!userId) return _apiErr("Auth failed", 500);
-      // Force-confirm the account immediately so login never fails with "Email not confirmed".
-      // This is the client-side belt-and-suspenders on top of the DB trigger in schema.sql.
-      await sb.rpc("confirm_user_by_id", { uid: userId }).catch(() => {});
+      if (authErr) {
+        console.error("[signup] signUp error:", authErr.message);
+        return _apiErr(`Signup error: ${authErr.message}`, 400);
+      }
+      if (authData.user?.id) {
+        userId = authData.user.id;
+      } else {
+        // Auth user already exists — recover by signing in with same credentials
+        console.warn("[signup] signUp returned no user (email already registered) — attempting signIn recovery");
+        const { data: siData, error: siErr } = await sb.auth.signInWithPassword({ email: fakeEmail, password: password as string });
+        if (siErr || !siData.user?.id) {
+          console.error("[signup] recovery signIn failed:", siErr?.message);
+          return _apiErr("Username is taken or credentials mismatch. Please try a different username.", 409);
+        }
+        userId = siData.user.id;
+      }
       const prof: any = profile || {};
       const profileRow = { id: userId, username, pic: prof.pic || "🌑", bio: prof.bio || "", cov: prof.covenant || prof.cov || "silk", tier: prof.tier || "commoner", major: prof.major || "Undeclared", year: prof.year || "Freshman", wealth: prof.wealth || "Self-Made", rep: prof.rep || "New Arrival", followers: 0, following: 0, xp: 0, traits: [] };
-      const { error: profErr } = await sb.from("profiles").insert(profileRow);
+      // Use upsert so re-attempts (e.g. previous profile-save failure) don't throw duplicate-key errors
+      const { error: profErr } = await sb.from("profiles").upsert(profileRow, { onConflict: "id" });
       if (profErr) {
-        return _apiErr(`Account created but profile save failed: ${profErr.message}. Make sure you have run the latest schema.sql in your Supabase SQL Editor, then sign up again.`, 500);
+        console.error("[signup] profile upsert error:", profErr.message);
+        return _apiErr(`Profile save failed: ${profErr.message}`, 500);
       }
-      await sb.from("wallets").insert({ user_id: userId, balance: 5000 }).catch(() => {});
+      await sb.from("wallets").upsert({ user_id: userId, balance: 5000 }, { onConflict: "user_id" }).catch(() => {});
+      console.log("[signup] success, userId:", userId);
       return _apiOk({ token: "supabase", user: { id: userId, username, profile: { ...profileRow, covenant: profileRow.cov } } });
     }
     if (seg[1] === "login" && method === "POST") {
       const { username, password } = body as any;
       const fakeEmail = `${(username as string).toLowerCase().replace(/[^a-z0-9]/g, "_")}@noctis.local`;
+      console.log("[login] attempting signIn for:", fakeEmail);
       const { data: authData, error: authErr } = await sb.auth.signInWithPassword({ email: fakeEmail, password: password as string });
       if (authErr) {
+        console.error("[login] signIn error:", authErr.message);
         const msg = authErr.message?.toLowerCase() || "";
         if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
-          // Trigger hasn't fired yet — confirm the account right now via a direct update
-          try {
-            await sb.rpc("auto_confirm_user_now", { target_id: "" }).catch(() => {});
-          } catch {}
-          return _apiErr("Account not confirmed. Please re-run the schema.sql in your Supabase SQL Editor — the updated version includes an auto-confirm trigger that permanently fixes this.", 401);
+          return _apiErr("Account not confirmed. Re-run schema.sql in your Supabase SQL Editor, then try again.", 401);
         }
-        if (msg.includes("invalid login") || msg.includes("invalid credentials") || msg.includes("wrong password") || msg.includes("invalid email")) {
-          return _apiErr("Wrong username or password. Note: accounts created before the server update only exist on that original device. You may need to sign up for a new account.", 401);
+        if (msg.includes("invalid login") || msg.includes("invalid credentials") || msg.includes("wrong password") || msg.includes("invalid email") || msg.includes("email not found") || msg.includes("user not found")) {
+          return _apiErr("Wrong username or password. If you signed up on a different device without server sync, try signing up again.", 401);
         }
         return _apiErr(`Login failed: ${authErr.message}`, 401);
       }
+      console.log("[login] signIn succeeded, userId:", authData.user?.id);
       const userId = authData.user?.id;
       let { data: rawProf } = await sb.from("profiles").select("*").eq("id", userId).maybeSingle();
       // If profile doesn't exist yet (e.g. signup failed mid-way), auto-create it now
@@ -6302,6 +6317,19 @@ export default function Umbra() {
     );
   }
 
+  // If uid is set but ACCTS hasn't loaded the user yet (e.g. async session restore still in flight),
+  // show a loading state instead of silently rendering nothing.
+  if (screen === "app" && uid && !user) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#0e0b07", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+        <p style={{ fontFamily: "'Cinzel',serif", color: "#d4af37", fontSize: 14, letterSpacing: "0.15em" }}>LOADING UMBRA…</p>
+        <button onClick={() => { try { localStorage.removeItem("umbra_session"); } catch {} setScreen("landing"); setUid(null); }}
+          style={{ background: "none", border: "1px solid #362e1e", color: "#5a4a32", padding: "8px 20px", borderRadius: 6, fontSize: 12, cursor: "pointer", fontFamily: "'Cormorant Garamond',serif" }}>
+          Sign out and return to login
+        </button>
+      </div>
+    );
+  }
   if (screen !== "app" || !user) return null;
 
   // ═══════════════════════════════════════════════════════
