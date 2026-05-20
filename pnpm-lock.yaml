@@ -251,6 +251,9 @@ importers:
       '@rollup/rollup-win32-x64-msvc':
         specifier: ^4.60.4
         version: 4.60.4
+      '@supabase/supabase-js':
+        specifier: ^2.106.0
+        version: 2.106.0
       '@tailwindcss/oxide-win32-x64-msvc':
         specifier: ^4.3.0
         version: 4.3.0

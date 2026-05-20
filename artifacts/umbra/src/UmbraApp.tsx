@@ -19,11 +19,14 @@ import { PROFS } from "./data/profs";
 import { LOTS, INIT_CONFS, PARTIES, TWISTED, LIVES, QNA_INIT, ANNOUNCEMENTS, RELIEF_ROOMS, QUIZ, TIER_QUIZ, INIT_POSTS } from "./data/npcData";
 import { SHOP_ITEMS, DAILY_DEALS, FLASH_SALES, PORTAL_LISTINGS, TRENT_REL_LEVELS, TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5, TRENT_GIFT_REPLIES, TRENT_PIC_REPLIES } from "./data/shopAndTrent";
 import { AUTO_C, AUTO_UN, NPC_COMMENTERS, UNSPLASH_PLACEHOLDERS } from "./data/feedData";
+import { supabase } from "./lib/supabase";
+import { callLLM, getStoredCreds, buildNPCPrompt, buildProfPrompt, buildNPCPostPrompt } from "./lib/ai";
 
-// ─── LOCAL API SHIM ──────────────────────────────────────────────────────────
+// ─── SUPABASE + AI SHIM ──────────────────────────────────────────────────────
 // Intercepts all /api/* fetch calls and handles them with localStorage so the
 // app runs completely standalone — no backend, no Vercel, no Railway needed.
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared helpers
 function _ls<T>(key: string, def: T): T {
   try { return JSON.parse(localStorage.getItem(key) || "null") ?? def; } catch { return def; }
 }
@@ -37,33 +40,201 @@ function _apiErr(msg: string, status = 400): Response {
   return new Response(JSON.stringify({ error: msg }), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Response> {
-  const method = (opts.method || "GET").toUpperCase();
-  const qMark = url.indexOf("?");
-  const path = qMark !== -1 ? url.slice(0, qMark) : url;
-  const query = qMark !== -1 ? new URLSearchParams(url.slice(qMark + 1)) : new URLSearchParams();
-  const seg = path.replace(/^\/api\//, "").split("/");
-  let body: Record<string, unknown> = {};
-  try { if (opts.body) body = JSON.parse(opts.body as string); } catch {}
+// ─── AI route handler (LLM-powered, template fallback) ───────────────────────
+async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promise<Response> {
+  const creds = getStoredCreds();
+
+  if (sub === "npc-reply" || sub === "npc-initiate" || sub === "worship-dm" || sub === "prof-dm") {
+    const isProfDM = sub === "prof-dm";
+    const npc = (isProfDM ? body.profProfile : body.npcProfile) as any;
+    const npcId = (body.npcId as string) || npc?.id || "";
+    const relLevel = Math.min((body.relLevel as number) ?? 0, 5);
+    const username = (body.username as string) || "student";
+    const trentMemory = (body.trentMemory as string) || "";
+    const history = Array.isArray(body.conversationHistory) ? (body.conversationHistory as any[]) : [];
+    const userMsg = (body.message as string) || "";
+
+    // Template fallback when no creds or no profile
+    if (!creds || !npc) {
+      let reply = "";
+      if (npcId === "trent_morrison") {
+        const pools = [TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5];
+        const pool = pools[relLevel] || TRENT_REPLIES_L0;
+        reply = pool[Math.floor(Math.random() * pool.length)] || "...";
+      } else {
+        const fallbacks = ["Interesting. Go on.", "I wasn't expecting that from you.", "There's more to this than you're saying.", "You always find a way to surprise me.", "Tonight is complicated. Let's talk another time.", "I've been thinking about what you said earlier.", "You know how this ends, right?", "Don't read into this. I'm just being polite."];
+        reply = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+      }
+      return _apiOk({ reply, message: reply });
+    }
+
+    const systemPrompt = isProfDM
+      ? buildProfPrompt(npc, { username })
+      : buildNPCPrompt(npc, { relLevel, trentMemory, username });
+
+    const msgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: systemPrompt },
+    ];
+    for (const h of history.slice(-6)) {
+      if (h.from === "user" || h.fromId !== npcId) {
+        msgs.push({ role: "user", content: h.text || h.content || "" });
+      } else {
+        msgs.push({ role: "assistant", content: h.text || h.content || "" });
+      }
+    }
+    if (userMsg) msgs.push({ role: "user", content: userMsg });
+
+    const reply = await callLLM(msgs, creds, { maxTokens: 200, temperature: 0.88 }).catch(() => {
+      const fb = ["...", "I need a moment.", "We'll speak again soon.", "Not now."];
+      return fb[Math.floor(Math.random() * fb.length)];
+    });
+    return _apiOk({ reply, message: reply });
+  }
+
+  if (sub === "npc-comment") {
+    const npcs = (body.npcs as any[]) || [];
+    const post = body.post as any;
+    if (!creds || npcs.length === 0) {
+      return _apiOk({ comments: npcs.map(() => ({ text: AUTO_C[Math.floor(Math.random() * AUTO_C.length)] })) });
+    }
+    const postText = post?.content || post?.text || "";
+    const comments = await Promise.all(
+      npcs.slice(0, 4).map(async (npc: any) => {
+        const msgs = [
+          { role: "system" as const, content: buildNPCPrompt(npc) + "\nWrite ONE short comment (1 sentence max) on this post. Output only the comment text." },
+          { role: "user" as const, content: `Post: "${postText}"` },
+        ];
+        const text = await callLLM(msgs, creds, { maxTokens: 60, temperature: 0.9 }).catch(
+          () => AUTO_C[Math.floor(Math.random() * AUTO_C.length)]
+        );
+        return { text, username: npc.un };
+      })
+    );
+    return _apiOk({ comments });
+  }
+
+  if (sub === "npc-memory") {
+    const existing = (body.existingMemory as string) || "";
+    const lastExchange = Array.isArray(body.lastExchange) ? (body.lastExchange as any[]) : [];
+    const last = lastExchange.map((e: any) => e.text || e.content || "").join(" | ");
+    return _apiOk({ memory: existing ? `${existing} | ${last}` : last });
+  }
+
+  // gossip/rumour — 503 triggers existing template fallback in the app
+  if (sub === "gossip" || sub === "generate-rumour") return _apiErr("offline", 503);
+
+  return _apiOk({ success: true, reply: "", snippets: [], comments: [], message: "" });
+}
+
+// ─── NPC post generation ──────────────────────────────────────────────────────
+let _genPostsRunning = false;
+async function _generateNPCPosts(creds: ReturnType<typeof getStoredCreds>): Promise<any[]> {
+  if (_genPostsRunning || !creds) return [];
+  _genPostsRunning = true;
+  try {
+    const npcList = (Object.values(ACCTS) as any[]).filter(
+      (u: any) => u.autoReply || u.tier === "apex" || u.tier === "ascendant" || u.tier === "elite"
+    );
+    const picks: any[] = [];
+    const used = new Set<string>();
+    while (picks.length < 6 && picks.length < npcList.length) {
+      const r = npcList[Math.floor(Math.random() * npcList.length)];
+      if (r && !used.has(r.id)) { picks.push(r); used.add(r.id); }
+    }
+    const generated: any[] = [];
+    for (const npc of picks) {
+      const msgs = [
+        { role: "system" as const, content: buildNPCPostPrompt(npc) },
+        { role: "user" as const, content: "Write your post now." },
+      ];
+      const content = await callLLM(msgs, creds, { maxTokens: 120, temperature: 0.92 }).catch(
+        () => (INIT_POSTS as any[])[Math.floor(Math.random() * (INIT_POSTS as any[]).length)]?.content || "The night never lies."
+      );
+      const ts = new Date(Date.now() - Math.floor(Math.random() * 7200000)).toISOString();
+      generated.push({
+        id: `npc_post_${npc.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        user_id: npc.id, userId: npc.id,
+        username: npc.un,
+        content,
+        pic: npc.pic || "🌑",
+        covenant: npc.cov || "silk",
+        tier: npc.tier || "commoner",
+        likes: Math.floor(Math.random() * 40),
+        skulls: Math.floor(Math.random() * 10),
+        flames: Math.floor(Math.random() * 15),
+        is_npc: true, isNpc: true,
+        created_at: ts, createdAt: ts,
+      });
+    }
+    return generated;
+  } finally {
+    _genPostsRunning = false;
+  }
+}
+
+// ─── Supabase handler ─────────────────────────────────────────────────────────
+async function _supabaseHandler(method: string, seg: string[], query: URLSearchParams, body: Record<string, unknown>): Promise<Response> {
+  const sb = supabase!;
 
   // ── MESSAGES ──────────────────────────────────────────────────────────────
   if (seg[0] === "messages") {
-    const allMsgs = _ls<unknown[]>("umbra_local_msgs", []);
     if (method === "GET" && seg[1]) {
       const uid = seg[1];
-      return _apiOk({ messages: allMsgs.filter((m: any) => m.fromId === uid || m.toId === uid) });
+      const { data, error } = await sb.from("messages").select("*")
+        .or(`from_id.eq.${uid},to_id.eq.${uid}`).order("created_at");
+      if (error) return _apiErr(error.message);
+      return _apiOk({ messages: (data || []).map((m: any) => ({ id: m.id, fromId: m.from_id, fromUsername: m.from_username, fromPic: m.from_pic, toId: m.to_id, toUsername: m.to_username, text: m.text, createdAt: m.created_at })) });
     }
     if (method === "POST") {
-      const msg = { ...body, id: `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`, createdAt: new Date().toISOString() };
-      _lsSet("umbra_local_msgs", [...allMsgs, msg]);
-      return _apiOk({ message: msg });
+      const b = body as any;
+      const msg = { id: b.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`, from_id: b.fromId, from_username: b.fromUsername, from_pic: b.fromPic || "🌑", to_id: b.toId, to_username: b.toUsername, text: b.text, created_at: new Date().toISOString() };
+      const { error } = await sb.from("messages").insert(msg);
+      if (error) return _apiErr(error.message);
+      return _apiOk({ message: { ...msg, fromId: msg.from_id, toId: msg.to_id, fromUsername: msg.from_username, fromPic: msg.from_pic, toUsername: msg.to_username, createdAt: msg.created_at } });
     }
   }
 
   // ── POSTS ──────────────────────────────────────────────────────────────────
   if (seg[0] === "posts") {
-    if (method === "GET" && !seg[1]) return _apiOk({ posts: _ls("umbra:posts:v1", []) });
-    return _apiOk({ success: true }); // react/comment/delete all handled locally
+    if (method === "GET" && !seg[1]) {
+      const { data, error } = await sb.from("posts").select("*").order("created_at", { ascending: false }).limit(100);
+      if (error) return _apiErr(error.message);
+      let posts = (data || []).map((p: any) => ({ id: p.id, userId: p.user_id, username: p.username, content: p.content, image: p.image, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes || 0, skulls: p.skulls || 0, flames: p.flames || 0, isNpc: p.is_npc, createdAt: p.created_at }));
+      if (posts.length < 8) {
+        const creds = getStoredCreds();
+        if (creds) {
+          const aiPosts = await _generateNPCPosts(creds);
+          for (const p of aiPosts) {
+            await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }).catch(() => {});
+          }
+          posts = [...aiPosts.map((p: any) => ({ ...p, userId: p.user_id, createdAt: p.created_at })), ...posts];
+        } else if (posts.length === 0) {
+          posts = (INIT_POSTS as any[]).map((p: any) => ({ ...p, userId: p.userId || p.user_id, covenant: p.covenant || p.cov, createdAt: p.createdAt || p.created_at }));
+        }
+      }
+      return _apiOk({ posts });
+    }
+    if (method === "POST" && !seg[1]) {
+      const b = body as any;
+      const post = { id: b.id || `post_${Date.now()}_${Math.random().toString(36).slice(2)}`, user_id: b.userId || b.user_id, username: b.username, content: b.content, image: b.image || null, pic: b.pic || "🌑", covenant: b.covenant || b.cov || "silk", tier: b.tier || "commoner", likes: 0, skulls: 0, flames: 0, is_npc: b.isNpc || false, created_at: new Date().toISOString() };
+      const { error } = await sb.from("posts").insert(post);
+      if (error) return _apiErr(error.message);
+      return _apiOk({ post: { ...post, userId: post.user_id, createdAt: post.created_at } });
+    }
+    if (method === "PATCH" && seg[1]) {
+      const b = body as any;
+      const upd: any = {};
+      if (b.likes !== undefined) upd.likes = b.likes;
+      if (b.skulls !== undefined) upd.skulls = b.skulls;
+      if (b.flames !== undefined) upd.flames = b.flames;
+      await sb.from("posts").update(upd).eq("id", seg[1]);
+      return _apiOk({ success: true });
+    }
+    if (method === "DELETE" && seg[1]) {
+      await sb.from("posts").delete().eq("id", seg[1]);
+      return _apiOk({ success: true });
+    }
+    return _apiOk({ success: true });
   }
 
   // ── USERS ──────────────────────────────────────────────────────────────────
@@ -71,22 +242,196 @@ async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Re
     if (method === "GET" && !seg[1]) {
       const q = query.get("q") || "";
       const limit = Math.min(parseInt(query.get("limit") || "200"), 500);
-      const users = (Object.values(ACCTS) as any[])
+      const npcUsers = (Object.values(ACCTS) as any[])
         .filter((u: any) => !u.isGuest && u.un && (!q || u.un.toLowerCase().includes(q.toLowerCase())))
         .slice(0, limit)
-        .map((u: any) => ({
-          id: u.id, username: u.un, followers: u.followers ?? 0, following: u.following ?? 0,
-          profile: { pic: u.pic, bio: u.bio, covenant: u.cov, tier: u.tier, traits: u.traits || [] },
-        }));
-      return _apiOk({ users });
+        .map((u: any) => ({ id: u.id, username: u.un, followers: u.followers ?? 0, following: u.following ?? 0, profile: { pic: u.pic, bio: u.bio, covenant: u.cov, tier: u.tier, traits: u.traits || [] } }));
+      let sbQ = sb.from("profiles").select("id,username,followers,following,pic,bio,cov,tier,traits");
+      if (q) sbQ = (sbQ as any).ilike("username", `%${q}%`);
+      const { data } = await (sbQ as any).limit(limit);
+      const realUsers = (data || []).map((u: any) => ({ id: u.id, username: u.username, followers: u.followers || 0, following: u.following || 0, profile: { pic: u.pic, bio: u.bio, covenant: u.cov, tier: u.tier, traits: u.traits || [] } }));
+      const seen = new Set(realUsers.map((u: any) => u.id));
+      return _apiOk({ users: [...realUsers, ...npcUsers.filter((u: any) => !seen.has(u.id))].slice(0, limit) });
+    }
+    if (method === "PATCH" && seg[1] && seg[2] === "profile") {
+      const b = body as any;
+      const upd: any = {};
+      ["pic","bio","cov","tier","traits","major","year","wealth","rep","followers","following"].forEach(k => { if (b[k] !== undefined) upd[k] = b[k]; });
+      if (b.covenant !== undefined) upd.cov = b.covenant;
+      await sb.from("profiles").update(upd).eq("id", seg[1]);
+      if (ACCTS[seg[1]]) Object.assign(ACCTS[seg[1]], b);
+      return _apiOk({ success: true });
+    }
+  }
+
+  // ── AUTH ───────────────────────────────────────────────────────────────────
+  if (seg[0] === "auth") {
+    if (seg[1] === "signup" && method === "POST") {
+      const { username, password, profile = {} } = body as any;
+      const { data: existing } = await sb.from("profiles").select("id").eq("username", username).maybeSingle();
+      const npcTaken = (Object.values(ACCTS) as any[]).some((u: any) => u.un?.toLowerCase() === (username as string)?.toLowerCase());
+      if (existing || npcTaken) return _apiErr("Username already taken.", 409);
+      const fakeEmail = `${(username as string).toLowerCase().replace(/[^a-z0-9]/g, "_")}@noctis.local`;
+      const { data: authData, error: authErr } = await sb.auth.signUp({ email: fakeEmail, password: password as string });
+      if (authErr) return _apiErr(authErr.message, 400);
+      const userId = authData.user?.id;
+      if (!userId) return _apiErr("Auth failed", 500);
+      const prof: any = profile || {};
+      await sb.from("profiles").insert({ id: userId, username, pic: prof.pic || "🌑", bio: prof.bio || "", cov: prof.covenant || prof.cov || "silk", tier: prof.tier || "commoner", major: prof.major || "Undeclared", year: prof.year || "Freshman", wealth: prof.wealth || "Self-Made", rep: prof.rep || "New Arrival", followers: 0, following: 0, traits: [] });
+      await sb.from("wallets").insert({ user_id: userId, balance: 5000 }).catch(() => {});
+      return _apiOk({ token: "supabase", user: { id: userId, username, profile: prof } });
+    }
+    if (seg[1] === "login" && method === "POST") {
+      const { username, password } = body as any;
+      const fakeEmail = `${(username as string).toLowerCase().replace(/[^a-z0-9]/g, "_")}@noctis.local`;
+      const { data: authData, error: authErr } = await sb.auth.signInWithPassword({ email: fakeEmail, password: password as string });
+      if (authErr) return _apiErr("Invalid credentials.", 401);
+      const userId = authData.user?.id;
+      const { data: prof } = await sb.from("profiles").select("*").eq("id", userId).single();
+      return _apiOk({ token: "supabase", user: { id: userId, username, profile: prof } });
+    }
+    if (seg[1] === "profile") {
+      if (method === "PUT") {
+        const { userId, ...rest } = body as any;
+        if (!userId) return _apiErr("userId required", 400);
+        const fieldMap: Record<string, string> = { covenant: "cov", trentMemory: "trent_memory", canSeeAuction: "can_see_auction", canSeeRelief: "can_see_relief" };
+        const upd: any = {};
+        for (const [k, v] of Object.entries(rest)) { upd[fieldMap[k] || k] = v; }
+        await sb.from("profiles").update(upd).eq("id", userId);
+        return _apiOk({ success: true });
+      }
+      if (method === "GET" && seg[2]) {
+        const { data: prof } = await sb.from("profiles").select("*").eq("id", seg[2]).maybeSingle();
+        if (prof) return _apiOk({ profile: { pic: prof.pic, bio: prof.bio, traits: prof.traits || [], covenant: prof.cov, tier: prof.tier, major: prof.major, year: prof.year, wealth: prof.wealth, rep: prof.rep } });
+        const acct = ACCTS[seg[2]] as any;
+        if (acct) return _apiOk({ profile: { pic: acct.pic, bio: acct.bio, traits: acct.traits || [], covenant: acct.cov, tier: acct.tier, major: acct.major, year: acct.year, wealth: acct.wealth, rep: acct.rep } });
+        return _apiErr("Not found", 404);
+      }
+    }
+  }
+
+  // ── AUCTIONS ───────────────────────────────────────────────────────────────
+  if (seg[0] === "auctions") {
+    if (method === "GET" && !seg[1]) {
+      const { data } = await sb.from("auctions").select("*").eq("is_active", true).order("created_at", { ascending: false });
+      return _apiOk({ auctions: (data || []).map((a: any) => ({ ...a, subjectId: a.subject_id, subjectType: a.subject_type, subjectName: a.subject_name, subjectAvatar: a.subject_avatar, subjectData: a.subject_data, startingBid: a.starting_bid, topBid: a.top_bid, topBidder: a.top_bidder, isActive: a.is_active, createdAt: a.created_at })) });
+    }
+    if (method === "GET" && seg[1] === "history") {
+      const { data } = await sb.from("auctions").select("*").eq("is_active", false).order("created_at", { ascending: false });
+      return _apiOk({ auctions: data || [] });
+    }
+    if (method === "GET" && seg[1] === "user" && seg[2]) {
+      const { data } = await sb.from("auctions").select("*").eq("subject_id", seg[2]).eq("is_active", true).maybeSingle();
+      return _apiOk({ auction: data || null });
+    }
+    if (method === "POST" && !seg[1]) {
+      const b = body as any;
+      const auction = { id: b.id || `auc_${Date.now()}`, subject_id: b.subjectId, subject_type: b.subjectType || "user", subject_name: b.subjectName, subject_avatar: b.subjectAvatar || "🌑", subject_data: b.subjectData || {}, reason: b.reason || "", starting_bid: b.startingBid || 500, top_bid: b.startingBid || 500, top_bidder: null, bids: [], is_active: true, created_at: new Date().toISOString() };
+      const { error } = await sb.from("auctions").insert(auction);
+      if (error) return _apiErr(error.message);
+      return _apiOk({ auction: { ...auction, subjectId: auction.subject_id, topBid: auction.top_bid, isActive: true, createdAt: auction.created_at } });
+    }
+    if (method === "POST" && seg[2] === "bid") {
+      const b = body as any;
+      await sb.from("bids").insert({ id: b.id || `bid_${Date.now()}`, auction_id: seg[1], bidder_id: b.bidderId, bidder_name: b.bidderName, amount: b.amount, created_at: new Date().toISOString() });
+      const { data: auc, error } = await sb.from("auctions").update({ top_bid: b.amount, top_bidder: b.bidderId }).eq("id", seg[1]).select().single();
+      if (error) return _apiErr(error.message);
+      return _apiOk({ success: true, auction: auc });
+    }
+  }
+
+  // ── WALLET ──────────────────────────────────────────────────────────────────
+  if (seg[0] === "wallet") {
+    if (method === "GET" && seg[1]) {
+      const { data } = await sb.from("wallets").select("balance").eq("user_id", seg[1]).maybeSingle();
+      return _apiOk({ balance: data?.balance ?? null });
+    }
+    if (method === "POST" && seg[1] === "transfer") {
+      const { toId, amount, fromId } = body as any;
+      const { data: toW } = await sb.from("wallets").select("balance").eq("user_id", toId).maybeSingle();
+      const newBal = ((toW?.balance as number) ?? 5000) + (amount as number || 0);
+      await sb.from("wallets").upsert({ user_id: toId, balance: newBal, updated_at: new Date().toISOString() });
+      if (fromId) {
+        const { data: fromW } = await sb.from("wallets").select("balance").eq("user_id", fromId).maybeSingle();
+        await sb.from("wallets").upsert({ user_id: fromId, balance: ((fromW?.balance as number) ?? 5000) - (amount as number || 0), updated_at: new Date().toISOString() });
+      }
+      return _apiOk({ toBalance: newBal });
+    }
+  }
+
+  // ── BIDS ────────────────────────────────────────────────────────────────────
+  if (seg[0] === "bids") {
+    if (method === "GET") {
+      const { data } = await sb.from("bids").select("*").order("created_at", { ascending: false });
+      return _apiOk({ bids: data || [] });
+    }
+    if (method === "POST") {
+      const b = body as any;
+      await sb.from("bids").insert({ id: b.id || `bid_${Date.now()}`, auction_id: b.auctionId, bidder_id: b.bidderId, bidder_name: b.bidderName, amount: b.amount, created_at: new Date().toISOString() });
+      return _apiOk({ success: true });
+    }
+  }
+
+  // ── LEADERBOARD ─────────────────────────────────────────────────────────────
+  if (seg[0] === "leaderboard") {
+    const { data: profRows } = await sb.from("profiles").select("id,username,pic,cov,tier,followers").limit(200);
+    const { data: walletRows } = await sb.from("wallets").select("user_id,balance").limit(200);
+    const walletMap = Object.fromEntries((walletRows || []).map((w: any) => [w.user_id, w.balance]));
+    const xpMap = _ls<Record<string, number>>("umbra_xp", {});
+    const infMap = _ls<Record<string, number>>("umbra_influence", {});
+    const npcLeaders = (Object.values(ACCTS) as any[]).filter((u: any) => !u.isGuest && u.un && u.un !== "Lurker")
+      .map((u: any) => ({ id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 50000, influence: infMap[u.id] ?? 0, followers: u.followers ?? 0 }));
+    const realLeaders = (profRows || []).map((u: any) => ({ id: u.id, username: u.username, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 5000, influence: infMap[u.id] ?? 0, followers: u.followers || 0 }));
+    const seen = new Set(realLeaders.map((u: any) => u.id));
+    const leaderboard = [...realLeaders, ...npcLeaders.filter((u: any) => !seen.has(u.id))].sort((a: any, b: any) => b.xp - a.xp || b.wealth - a.wealth).slice(0, 50);
+    return _apiOk({ leaderboard, updatedAt: new Date().toISOString() });
+  }
+
+  // ── STORAGE ─────────────────────────────────────────────────────────────────
+  if (seg[0] === "storage") return _apiErr("local mode", 503);
+
+  return _apiErr("Not found", 404);
+}
+
+// ─── localStorage fallback handler (sync) ────────────────────────────────────
+function _localstorageHandler(method: string, seg: string[], query: URLSearchParams, body: Record<string, unknown>): Response {
+  if (seg[0] === "messages") {
+    const allMsgs = _ls<unknown[]>("umbra_local_msgs", []);
+    if (method === "GET" && seg[1]) return _apiOk({ messages: (allMsgs as any[]).filter((m: any) => m.fromId === seg[1] || m.toId === seg[1]) });
+    if (method === "POST") {
+      const msg = { ...body, id: `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`, createdAt: new Date().toISOString() };
+      _lsSet("umbra_local_msgs", [...allMsgs, msg]);
+      return _apiOk({ message: msg });
+    }
+  }
+  if (seg[0] === "posts") {
+    if (method === "GET" && !seg[1]) {
+      let posts = _ls<any[]>("umbra:posts:v1", []);
+      if (posts.length === 0) {
+        posts = (INIT_POSTS as any[]).map((p: any) => ({ ...p, userId: p.userId || p.user_id, covenant: p.covenant || p.cov, createdAt: p.createdAt || p.created_at }));
+        _lsSet("umbra:posts:v1", posts);
+      }
+      return _apiOk({ posts });
+    }
+    if (method === "POST" && !seg[1]) {
+      const posts = _ls<any[]>("umbra:posts:v1", []);
+      const post = { ...body, id: (body as any).id || `post_${Date.now()}`, createdAt: new Date().toISOString() };
+      _lsSet("umbra:posts:v1", [post, ...posts]);
+      return _apiOk({ post });
+    }
+    return _apiOk({ success: true });
+  }
+  if (seg[0] === "users") {
+    if (method === "GET" && !seg[1]) {
+      const q = query.get("q") || "";
+      const limit = Math.min(parseInt(query.get("limit") || "200"), 500);
+      return _apiOk({ users: (Object.values(ACCTS) as any[]).filter((u: any) => !u.isGuest && u.un && (!q || u.un.toLowerCase().includes(q.toLowerCase()))).slice(0, limit).map((u: any) => ({ id: u.id, username: u.un, followers: u.followers ?? 0, following: u.following ?? 0, profile: { pic: u.pic, bio: u.bio, covenant: u.cov, tier: u.tier, traits: u.traits || [] } })) });
     }
     if (method === "PATCH" && seg[1] && seg[2] === "profile") {
       if (ACCTS[seg[1]]) Object.assign(ACCTS[seg[1]], body);
       return _apiOk({ success: true });
     }
   }
-
-  // ── AUTH ───────────────────────────────────────────────────────────────────
   if (seg[0] === "auth") {
     if (seg[1] === "signup" && method === "POST") {
       const { username, password, profile = {} } = body as any;
@@ -96,26 +441,25 @@ async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Re
       const pwStore = _ls<Record<string, string>>("umbra_pw_store", {});
       pwStore[id] = password as string;
       _lsSet("umbra_pw_store", pwStore);
+      const customAccts = _ls<Record<string, any>>("umbra_custom_accts", {});
+      customAccts[id] = { id, un: username, ...(profile as any) };
+      _lsSet("umbra_custom_accts", customAccts);
       return _apiOk({ token: "local", user: { id, username, profile } });
     }
     if (seg[1] === "login" && method === "POST") {
       const { username, password } = body as any;
       const pwStore = _ls<Record<string, string>>("umbra_pw_store", {});
       const customAccts = _ls<Record<string, any>>("umbra_custom_accts", {});
-      const acct = (Object.values(customAccts) as any[]).find(
-        (u: any) => u.un?.toLowerCase() === (username as string)?.toLowerCase() && pwStore[u.id] === password
-      );
+      const acct = (Object.values(customAccts) as any[]).find((u: any) => u.un?.toLowerCase() === (username as string)?.toLowerCase() && pwStore[u.id] === password);
       if (!acct) return _apiErr("Invalid credentials.", 401);
       return _apiOk({ token: "local", user: { id: acct.id, username: acct.un, profile: { pic: acct.pic, bio: acct.bio, covenant: acct.cov, tier: acct.tier } } });
     }
     if (seg[1] === "profile") {
       if (method === "PUT") {
         const { userId, ...rest } = body as any;
-        if (userId && ACCTS[userId]) {
-          Object.assign(ACCTS[userId], rest);
-          const saved = _ls<Record<string, any>>("umbra_custom_accts", {});
-          if (saved[userId]) { Object.assign(saved[userId], rest); _lsSet("umbra_custom_accts", saved); }
-        }
+        if (userId && ACCTS[userId]) { Object.assign(ACCTS[userId], rest); }
+        const saved = _ls<Record<string, any>>("umbra_custom_accts", {});
+        if (userId && saved[userId]) { Object.assign(saved[userId], rest); _lsSet("umbra_custom_accts", saved); }
         return _apiOk({ success: true });
       }
       if (method === "GET" && seg[2]) {
@@ -125,8 +469,6 @@ async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Re
       }
     }
   }
-
-  // ── AUCTIONS ───────────────────────────────────────────────────────────────
   if (seg[0] === "auctions") {
     const auctions = _ls<any[]>("umbra_local_auctions", []);
     if (method === "GET" && !seg[1]) return _apiOk({ auctions });
@@ -146,49 +488,29 @@ async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Re
       return _apiOk({ success: true, auction: auctions[idx] });
     }
   }
-
-  // ── WALLET ─────────────────────────────────────────────────────────────────
   if (seg[0] === "wallet") {
-    if (method === "GET" && seg[1]) {
-      const w = _ls<Record<string, number>>("umbra_wallets", {});
-      return _apiOk({ balance: w[seg[1]] ?? null });
-    }
+    if (method === "GET" && seg[1]) { const w = _ls<Record<string, number>>("umbra_wallets", {}); return _apiOk({ balance: w[seg[1]] ?? null }); }
     if (method === "POST" && seg[1] === "transfer") {
       const { toId, amount } = body as any;
       const w = _ls<Record<string, number>>("umbra_wallets", {});
-      const newBal = (w[toId as string] ?? 5000) + (amount as number || 0);
-      w[toId as string] = newBal;
+      w[toId as string] = (w[toId as string] ?? 5000) + (amount as number || 0);
       _lsSet("umbra_wallets", w);
-      return _apiOk({ toBalance: newBal });
+      return _apiOk({ toBalance: w[toId as string] });
     }
   }
-
-  // ── BIDS ───────────────────────────────────────────────────────────────────
   if (seg[0] === "bids") {
     if (method === "GET") return _apiOk({ bids: _ls("umbra_local_bids", []) });
-    if (method === "POST") {
-      _lsSet("umbra_local_bids", [..._ls<any[]>("umbra_local_bids", []), { ...body, id: `bid_${Date.now()}`, createdAt: new Date().toISOString() }]);
-      return _apiOk({ success: true });
-    }
+    if (method === "POST") { _lsSet("umbra_local_bids", [..._ls<any[]>("umbra_local_bids", []), { ...body, id: `bid_${Date.now()}`, createdAt: new Date().toISOString() }]); return _apiOk({ success: true }); }
   }
-
-  // ── LEADERBOARD ────────────────────────────────────────────────────────────
   if (seg[0] === "leaderboard") {
     const xpMap = _ls<Record<string, number>>("umbra_xp", {});
     const walletMap = _ls<Record<string, number>>("umbra_wallets", {});
     const infMap = _ls<Record<string, number>>("umbra_influence", {});
-    const leaderboard = (Object.values(ACCTS) as any[])
-      .filter((u: any) => !u.isGuest && u.un && u.un !== "Lurker")
-      .map((u: any) => ({
-        id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner",
-        xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 50000, influence: infMap[u.id] ?? 0, followers: u.followers ?? 0,
-      }))
-      .sort((a: any, b: any) => b.xp - a.xp || b.wealth - a.wealth)
-      .slice(0, 50);
+    const leaderboard = (Object.values(ACCTS) as any[]).filter((u: any) => !u.isGuest && u.un && u.un !== "Lurker")
+      .map((u: any) => ({ id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 50000, influence: infMap[u.id] ?? 0, followers: u.followers ?? 0 }))
+      .sort((a: any, b: any) => b.xp - a.xp || b.wealth - a.wealth).slice(0, 50);
     return _apiOk({ leaderboard, updatedAt: new Date().toISOString() });
   }
-
-  // ── AI — template-based responses ──────────────────────────────────────────
   if (seg[0] === "ai") {
     const sub = seg[1];
     if (sub === "npc-reply" || sub === "npc-initiate" || sub === "worship-dm" || sub === "prof-dm") {
@@ -200,51 +522,48 @@ async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Re
         const pool = pools[relLevel] || TRENT_REPLIES_L0;
         reply = pool[Math.floor(Math.random() * pool.length)] || "...";
       } else {
-        const fallbacks = [
-          "Interesting. Go on.",
-          "I wasn't expecting that from you.",
-          "There's more to this than you're saying.",
-          "You always find a way to surprise me.",
-          "Tonight is complicated. Let's talk another time.",
-          "I've been thinking about what you said earlier.",
-          "You know how this ends, right?",
-          "Don't read into this. I'm just being polite.",
-        ];
+        const fallbacks = ["Interesting. Go on.", "I wasn't expecting that from you.", "There's more to this than you're saying.", "You always find a way to surprise me.", "Tonight is complicated. Let's talk another time.", "You know how this ends, right?", "Don't read into this. I'm just being polite."];
         reply = fallbacks[Math.floor(Math.random() * fallbacks.length)];
       }
       return _apiOk({ reply, message: reply });
     }
-    if (sub === "npc-comment") {
-      const npcs: any[] = (body as any)?.npcs || [];
-      return _apiOk({ comments: npcs.map(() => ({ text: AUTO_C[Math.floor(Math.random() * AUTO_C.length)] })) });
-    }
-    if (sub === "npc-memory") {
-      const existing = (body as any)?.existingMemory || "";
-      const last = ((body as any)?.lastExchange || []).map((e: any) => e.text).join(" | ");
-      return _apiOk({ memory: existing ? `${existing} | ${last}` : last });
-    }
-    // gossip/rumour — return 503 so the existing template fallback in the catch block fires
+    if (sub === "npc-comment") return _apiOk({ comments: ((body.npcs as any[]) || []).map(() => ({ text: AUTO_C[Math.floor(Math.random() * AUTO_C.length)] })) });
+    if (sub === "npc-memory") { const existing = (body.existingMemory as string) || ""; const last = ((body.lastExchange as any[]) || []).map((e: any) => e.text).join(" | "); return _apiOk({ memory: existing ? `${existing} | ${last}` : last }); }
     if (sub === "gossip" || sub === "generate-rumour") return _apiErr("offline", 503);
     return _apiOk({ success: true, reply: "", snippets: [], comments: [], message: "" });
   }
-
-  // ── STORAGE — return error so profile pic upload falls back to compressImage()
   if (seg[0] === "storage") return _apiErr("local mode", 503);
-
   return _apiErr("Not found", 404);
 }
 
-// Patch window.fetch once at module load — routes /api/* to localStorage
-if (typeof window !== "undefined" && !(window as any).__umbraLocalAPI) {
-  (window as any).__umbraLocalAPI = true;
+// ─── Main router ──────────────────────────────────────────────────────────────
+async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Response> {
+  const method = (opts.method || "GET").toUpperCase();
+  const qMark = url.indexOf("?");
+  const path = qMark !== -1 ? url.slice(0, qMark) : url;
+  const query = qMark !== -1 ? new URLSearchParams(url.slice(qMark + 1)) : new URLSearchParams();
+  const seg = path.replace(/^\/api\//, "").split("/");
+  let body: Record<string, unknown> = {};
+  try { if (opts.body) body = JSON.parse(opts.body as string); } catch {}
+
+  // AI routes always use LLM (with template fallback when no key)
+  if (seg[0] === "ai") return _handleAIRoute(seg[1], body);
+  // Storage always 503 (triggers compressImage fallback in app)
+  if (seg[0] === "storage") return _apiErr("local mode", 503);
+  // Route to Supabase (shared) or localStorage (offline)
+  if (supabase) return _supabaseHandler(method, seg, query, body);
+  return _localstorageHandler(method, seg, query, body);
+}
+
+// Patch window.fetch once at module load — routes /api/* to Supabase + AI shim
+if (typeof window !== "undefined" && !(window as any).__umbraShim) {
+  (window as any).__umbraShim = true;
   const _origFetch = window.fetch.bind(window);
   (window as any).fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = typeof input === "string" ? input
-      : input instanceof URL ? input.href
-      : (input as Request).url;
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
     if (typeof url === "string" && url.startsWith("/api/")) {
-      return _localAPIHandler(url, init).catch(() =>
-        new Response(JSON.stringify({ error: "local api error" }), { status: 500, headers: { "Content-Type": "application/json" } })
+      return _localAPIHandler(url, init ?? {}).catch(() =>
+        new Response(JSON.stringify({ error: "shim error" }), { status: 500, headers: { "Content-Type": "application/json" } })
       );
     }
     return _origFetch(input, init);
