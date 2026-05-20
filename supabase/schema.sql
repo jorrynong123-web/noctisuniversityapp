@@ -1,16 +1,15 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- Noctis University — Supabase Schema v2
+-- Noctis University — Supabase Schema v3
 -- Run this in the Supabase SQL editor (https://app.supabase.com → SQL Editor)
 --
--- IMPORTANT STEPS (do these first in the Supabase dashboard):
---   1. Authentication → Settings → Disable "Enable email confirmations"
---   2. Authentication → Settings → Disable "Enable phone confirmations"
---   3. Then paste and run this entire script in SQL Editor → New Query
+-- BEFORE RUNNING:
+--   Authentication → Settings → disable "Enable email confirmations"
+--   Authentication → Settings → disable "Enable phone confirmations"
 --
 -- This script is idempotent — safe to run multiple times.
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- ── Profiles ─────────────────────────────────────────────────────────────────
+-- ── Profiles ──────────────────────────────────────────────────────────────────
 create table if not exists public.profiles (
   id               text primary key,
   username         text unique not null,
@@ -32,7 +31,6 @@ create table if not exists public.profiles (
   created_at       timestamptz default now()
 );
 
--- Add xp column if it doesn't already exist (for upgrading from v1)
 alter table public.profiles add column if not exists xp bigint default 0;
 
 -- ── Posts ─────────────────────────────────────────────────────────────────────
@@ -109,7 +107,7 @@ create table if not exists public.bids (
   created_at  timestamptz default now()
 );
 
--- ── Enable Row Level Security ─────────────────────────────────────────────────
+-- ── Row Level Security ────────────────────────────────────────────────────────
 alter table public.profiles  enable row level security;
 alter table public.posts     enable row level security;
 alter table public.comments  enable row level security;
@@ -118,7 +116,7 @@ alter table public.wallets   enable row level security;
 alter table public.auctions  enable row level security;
 alter table public.bids      enable row level security;
 
--- ── Drop existing policies before recreating (idempotent) ─────────────────────
+-- ── Policies (drop + recreate for idempotency) ────────────────────────────────
 drop policy if exists "profiles_select" on public.profiles;
 drop policy if exists "profiles_insert" on public.profiles;
 drop policy if exists "profiles_update" on public.profiles;
@@ -140,42 +138,34 @@ drop policy if exists "auctions_update" on public.auctions;
 drop policy if exists "bids_select"     on public.bids;
 drop policy if exists "bids_insert"     on public.bids;
 
--- ── Permissive RLS policies (anon key has full access for social feed) ─────────
--- Profiles: every user can read all, write their own
 create policy "profiles_select" on public.profiles for select using (true);
 create policy "profiles_insert" on public.profiles for insert with check (true);
 create policy "profiles_update" on public.profiles for update using (true);
 
--- Posts: public social feed
 create policy "posts_select" on public.posts for select using (true);
 create policy "posts_insert" on public.posts for insert with check (true);
 create policy "posts_update" on public.posts for update using (true);
 create policy "posts_delete" on public.posts for delete using (true);
 
--- Comments: public
 create policy "comments_select" on public.comments for select using (true);
 create policy "comments_insert" on public.comments for insert with check (true);
 create policy "comments_delete" on public.comments for delete using (true);
 
--- Messages: participants only
 create policy "messages_select" on public.messages for select using (true);
 create policy "messages_insert" on public.messages for insert with check (true);
 
--- Wallets: open
 create policy "wallets_select" on public.wallets for select using (true);
 create policy "wallets_insert" on public.wallets for insert with check (true);
 create policy "wallets_update" on public.wallets for update using (true);
 
--- Auctions: public
 create policy "auctions_select" on public.auctions for select using (true);
 create policy "auctions_insert" on public.auctions for insert with check (true);
 create policy "auctions_update" on public.auctions for update using (true);
 
--- Bids: public
 create policy "bids_select" on public.bids for select using (true);
 create policy "bids_insert" on public.bids for insert with check (true);
 
--- ── Performance indexes ────────────────────────────────────────────────────────
+-- ── Indexes ───────────────────────────────────────────────────────────────────
 create index if not exists posts_created_at_idx  on public.posts(created_at desc);
 create index if not exists posts_user_id_idx     on public.posts(user_id);
 create index if not exists messages_from_id_idx  on public.messages(from_id);
@@ -183,51 +173,47 @@ create index if not exists messages_to_id_idx    on public.messages(to_id);
 create index if not exists comments_post_id_idx  on public.comments(post_id);
 create index if not exists profiles_username_idx on public.profiles(lower(username));
 
--- ── Fix stuck "unconfirmed" accounts (existing) ──────────────────────────────
--- Confirms every existing account that is stuck in unconfirmed state.
--- Safe to run multiple times.
-update auth.users
-  set email_confirmed_at = now()
-  where email_confirmed_at is null;
-
--- ── Auto-confirm trigger (future accounts) ────────────────────────────────────
--- This trigger fires every time GoTrue inserts a new row into auth.users.
--- It immediately sets email_confirmed_at so login never fails with
--- "Email not confirmed" — regardless of the Supabase dashboard setting.
--- SECURITY DEFINER is required so the function runs with postgres privileges.
-create or replace function public.auto_confirm_user()
+-- ── Auto-confirm trigger ──────────────────────────────────────────────────────
+-- Uses BEFORE INSERT so we set email_confirmed_at on the NEW row directly.
+-- This never touches confirmed_at (it is generated by Supabase automatically).
+-- No UPDATE on auth.users is needed — avoids the generated-column error entirely.
+create or replace function public.handle_auto_confirm()
 returns trigger
 language plpgsql
-security definer set search_path = auth, public
+security definer
 as $$
 begin
-  update auth.users
-    set email_confirmed_at = coalesce(email_confirmed_at, now())
-    where id = new.id;
+  if new.email_confirmed_at is null then
+    new.email_confirmed_at := now();
+  end if;
   return new;
 end;
 $$;
 
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure public.auto_confirm_user();
+drop trigger if exists auto_confirm_on_signup on auth.users;
+create trigger auto_confirm_on_signup
+  before insert on auth.users
+  for each row execute function public.handle_auto_confirm();
 
--- ── RPC: confirm_user_by_id ───────────────────────────────────────────────────
--- Called by the app's signup handler immediately after auth.signUp() to ensure
--- the new account is confirmed before the client tries to log in.
--- The anon key can CALL this function even though it cannot directly update auth.users.
+-- ── RPC stub (called by app signup handler, safe to be a no-op) ──────────────
+-- The BEFORE INSERT trigger above handles confirmation.
+-- This function exists so the app's .rpc("confirm_user_by_id") call doesn't error.
 create or replace function public.confirm_user_by_id(uid uuid)
 returns void
 language plpgsql
-security definer set search_path = auth, public
+security definer
 as $$
 begin
-  update auth.users
-    set email_confirmed_at = coalesce(email_confirmed_at, now())
-    where id = uid;
+  -- Confirmation is handled by the handle_auto_confirm trigger at INSERT time.
+  -- Nothing to do here.
+  return;
 end;
 $$;
 
--- Allow the anon role to call it
 grant execute on function public.confirm_user_by_id(uuid) to anon, authenticated;
+
+-- ── Fix existing stuck accounts ───────────────────────────────────────────────
+-- Only updates email_confirmed_at (confirmed_at is generated — do NOT set it).
+update auth.users
+  set email_confirmed_at = now()
+  where email_confirmed_at is null;
