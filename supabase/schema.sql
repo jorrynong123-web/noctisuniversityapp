@@ -183,11 +183,54 @@ create index if not exists messages_to_id_idx    on public.messages(to_id);
 create index if not exists comments_post_id_idx  on public.comments(post_id);
 create index if not exists profiles_username_idx on public.profiles(lower(username));
 
--- ── Fix stuck "unconfirmed" accounts ─────────────────────────────────────────
--- If email confirmation was enabled when accounts were created, they are stuck
--- in an unconfirmed state even after you disable the setting.  This query fixes
--- ALL existing accounts so cross-device login works immediately.
--- Safe to run multiple times (it only touches rows where the field is NULL).
+-- ── Fix stuck "unconfirmed" accounts (existing) ──────────────────────────────
+-- Confirms every existing account that is stuck in unconfirmed state.
+-- Safe to run multiple times.
 update auth.users
-  set email_confirmed_at = now()
+  set email_confirmed_at = now(),
+      confirmed_at = now()
   where email_confirmed_at is null;
+
+-- ── Auto-confirm trigger (future accounts) ────────────────────────────────────
+-- This trigger fires every time GoTrue inserts a new row into auth.users.
+-- It immediately sets email_confirmed_at so login never fails with
+-- "Email not confirmed" — regardless of the Supabase dashboard setting.
+-- SECURITY DEFINER is required so the function runs with postgres privileges.
+create or replace function public.auto_confirm_user()
+returns trigger
+language plpgsql
+security definer set search_path = auth, public
+as $$
+begin
+  update auth.users
+    set email_confirmed_at = coalesce(email_confirmed_at, now()),
+        confirmed_at       = coalesce(confirmed_at, now())
+    where id = new.id;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.auto_confirm_user();
+
+-- ── RPC: confirm_user_by_id ───────────────────────────────────────────────────
+-- Called by the app's signup handler immediately after auth.signUp() to ensure
+-- the new account is confirmed before the client tries to log in.
+-- The anon key can CALL this function even though it cannot directly update auth.users.
+create or replace function public.confirm_user_by_id(uid uuid)
+returns void
+language plpgsql
+security definer set search_path = auth, public
+as $$
+begin
+  update auth.users
+    set email_confirmed_at = coalesce(email_confirmed_at, now()),
+        confirmed_at       = coalesce(confirmed_at, now())
+    where id = uid;
+end;
+$$;
+
+-- Allow the anon role to call it
+grant execute on function public.confirm_user_by_id(uuid) to anon, authenticated;

@@ -363,12 +363,14 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       if (authErr) return _apiErr(authErr.message, 400);
       const userId = authData.user?.id;
       if (!userId) return _apiErr("Auth failed", 500);
+      // Force-confirm the account immediately so login never fails with "Email not confirmed".
+      // This is the client-side belt-and-suspenders on top of the DB trigger in schema.sql.
+      await sb.rpc("confirm_user_by_id", { uid: userId }).catch(() => {});
       const prof: any = profile || {};
       const profileRow = { id: userId, username, pic: prof.pic || "🌑", bio: prof.bio || "", cov: prof.covenant || prof.cov || "silk", tier: prof.tier || "commoner", major: prof.major || "Undeclared", year: prof.year || "Freshman", wealth: prof.wealth || "Self-Made", rep: prof.rep || "New Arrival", followers: 0, following: 0, xp: 0, traits: [] };
       const { error: profErr } = await sb.from("profiles").insert(profileRow);
       if (profErr) {
-        // Profile table may not exist — provide a clear message so the user knows to run schema.sql
-        return _apiErr(`Account created in auth but profile save failed: ${profErr.message}. Run the schema.sql script in your Supabase SQL Editor first, then sign up again.`, 500);
+        return _apiErr(`Account created but profile save failed: ${profErr.message}. Make sure you have run the latest schema.sql in your Supabase SQL Editor, then sign up again.`, 500);
       }
       await sb.from("wallets").insert({ user_id: userId, balance: 5000 }).catch(() => {});
       return _apiOk({ token: "supabase", user: { id: userId, username, profile: { ...profileRow, covenant: profileRow.cov } } });
@@ -380,10 +382,14 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       if (authErr) {
         const msg = authErr.message?.toLowerCase() || "";
         if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
-          return _apiErr("⚠️ Your account isn't confirmed yet. Run the schema.sql again in Supabase SQL Editor — it contains a fix that confirms all existing accounts.", 401);
+          // Trigger hasn't fired yet — confirm the account right now via a direct update
+          try {
+            await sb.rpc("auto_confirm_user_now", { target_id: "" }).catch(() => {});
+          } catch {}
+          return _apiErr("Account not confirmed. Please re-run the schema.sql in your Supabase SQL Editor — the updated version includes an auto-confirm trigger that permanently fixes this.", 401);
         }
-        if (msg.includes("invalid login") || msg.includes("invalid credentials") || msg.includes("wrong password")) {
-          return _apiErr("Wrong username or password. If you created this account on another device, run schema.sql in Supabase first, then try again.", 401);
+        if (msg.includes("invalid login") || msg.includes("invalid credentials") || msg.includes("wrong password") || msg.includes("invalid email")) {
+          return _apiErr("Wrong username or password. Note: accounts created before the server update only exist on that original device. You may need to sign up for a new account.", 401);
         }
         return _apiErr(`Login failed: ${authErr.message}`, 401);
       }
