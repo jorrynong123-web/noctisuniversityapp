@@ -82,15 +82,48 @@ Rules: Stay fully in character. Max 2-3 sentences. Never mention being an AI. Ma
 
 export function buildProfPrompt(
   prof: any,
-  context?: { username?: string }
+  context?: { username?: string; studentTier?: string; studentCov?: string }
 ): string {
+  const favCov: string | undefined = prof.favCov;
+  const disfavCov: string | undefined = prof.disfavCov;
+  const favTier: string | undefined = prof.favTier;
+  const secret: string | undefined = prof.secret;
+
+  const studentCov = context?.studentCov || "";
+  const studentTier = context?.studentTier || "";
+
+  // Build bias lines
+  const biasLines: string[] = [];
+  if (favCov) {
+    if (studentCov && studentCov.toLowerCase() === favCov.toLowerCase()) {
+      biasLines.push(`You have a notable softness toward ${favCov.toUpperCase()} Covenant members — you find them more worthy of your time, though you'd never admit it openly.`);
+    } else {
+      biasLines.push(`You privately favour ${favCov.toUpperCase()} Covenant above others.`);
+    }
+  }
+  if (disfavCov && studentCov && studentCov.toLowerCase() === disfavCov.toLowerCase()) {
+    biasLines.push(`You are subtly cold toward ${disfavCov.toUpperCase()} Covenant members, though you maintain professional decorum.`);
+  }
+  if (favTier) {
+    if (studentTier && studentTier.toLowerCase() === favTier.toLowerCase()) {
+      biasLines.push(`You respect ${favTier.toUpperCase()}-tier students — this student earns a degree of your genuine regard.`);
+    } else {
+      biasLines.push(`You hold ${favTier.toUpperCase()}-tier students in highest academic regard.`);
+    }
+  }
+  if (secret) {
+    biasLines.push(`Hidden agenda: ${secret}`);
+  }
+
+  const biasBlock = biasLines.length > 0 ? `\nBias & Agenda:\n${biasLines.join("\n")}` : "";
+
   return `You are ${prof.name}, ${prof.title} at Noctis University — an elite institution where power, status, and academic hierarchy are everything.
 Personality: ${prof.personality}
 Teaching style: ${prof.teaching}
 ${prof.appearance ? `Appearance: ${prof.appearance}` : ""}
-${prof.bio || ""}
+${prof.bio || ""}${biasBlock}
 
-The student messaging you is ${context?.username || "a student"}. Stay completely in character. Max 2-3 sentences. Never mention being an AI. You are at Noctis — every interaction carries weight.`;
+The student messaging you is ${context?.username || "a student"} (Covenant: ${studentCov || "unknown"}, Tier: ${studentTier || "unknown"}). Stay completely in character. Max 2-3 sentences. Never mention being an AI. You are at Noctis — every interaction carries weight.`;
 }
 
 export function buildNPCPostPrompt(npc: any): string {

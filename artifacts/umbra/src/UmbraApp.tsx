@@ -56,8 +56,10 @@ async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promi
     const relLevel = Math.min((body.relLevel as number) ?? 0, 5);
     const username = (body.username as string) || "student";
     const trentMemory = (body.trentMemory as string) || "";
-    const history = Array.isArray(body.conversationHistory) ? (body.conversationHistory as any[]) : [];
-    const userMsg = (body.message as string) || "";
+    // Accept both field names for compatibility (conversationHistory / history, message / userMessage)
+    const history = Array.isArray(body.conversationHistory) ? (body.conversationHistory as any[])
+                   : Array.isArray(body.history) ? (body.history as any[]) : [];
+    const userMsg = (body.message as string) || (body.userMessage as string) || "";
 
     // Template fallback when no creds or no profile
     if (!creds || !npc) {
@@ -73,8 +75,10 @@ async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promi
       return _apiOk({ reply, message: reply });
     }
 
+    const studentTier = (body.studentTier as string) || "";
+    const studentCov = (body.studentCov as string) || "";
     const systemPrompt = isProfDM
-      ? buildProfPrompt(npc, { username })
+      ? buildProfPrompt(npc, { username, studentTier, studentCov })
       : buildNPCPrompt(npc, { relLevel, trentMemory, username });
 
     const msgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
@@ -134,8 +138,27 @@ async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promi
 
 // ─── NPC post generation ──────────────────────────────────────────────────────
 let _genPostsRunning = false;
-async function _generateNPCPosts(creds: ReturnType<typeof getStoredCreds>): Promise<any[]> {
-  if (_genPostsRunning || !creds) return [];
+// Template post phrases used when no API key is configured
+const NPC_POST_TEMPLATES = [
+  "Some of you were never meant to be here. We all see it.",
+  "Power isn't taken. It's recognised.",
+  "Tonight reminded me why I choose very few.",
+  "There's a version of you that almost had what you wanted. Pity.",
+  "The difference between us isn't talent. It's tolerance for discomfort.",
+  "Not everyone in this room deserves to be in this room.",
+  "You don't earn your seat at Noctis. You prove you deserve to keep it.",
+  "Every mistake here has a price. Some of you are overdue.",
+  "I don't compete. I arrive.",
+  "The ones who talk the most about loyalty are always the first to leave.",
+  "Some scores settle themselves if you're patient enough.",
+  "There's nothing more dangerous than someone with nothing left to lose.",
+  "Not a warning. An observation.",
+  "The weak call it cruelty. I call it clarity.",
+  "Standards exist for a reason. Not everyone meets them.",
+];
+
+async function _generateNPCPosts(creds?: ReturnType<typeof getStoredCreds>): Promise<any[]> {
+  if (_genPostsRunning) return [];
   _genPostsRunning = true;
   try {
     const npcList = (Object.values(ACCTS) as any[]).filter(
@@ -149,13 +172,19 @@ async function _generateNPCPosts(creds: ReturnType<typeof getStoredCreds>): Prom
     }
     const generated: any[] = [];
     for (const npc of picks) {
-      const msgs = [
-        { role: "system" as const, content: buildNPCPostPrompt(npc) },
-        { role: "user" as const, content: "Write your post now." },
-      ];
-      const content = await callLLM(msgs, creds, { maxTokens: 120, temperature: 0.92 }).catch(
-        () => (INIT_POSTS as any[])[Math.floor(Math.random() * (INIT_POSTS as any[]).length)]?.content || "The night never lies."
-      );
+      let content: string;
+      if (creds) {
+        const msgs = [
+          { role: "system" as const, content: buildNPCPostPrompt(npc) },
+          { role: "user" as const, content: "Write your post now." },
+        ];
+        content = await callLLM(msgs, creds, { maxTokens: 120, temperature: 0.92 }).catch(
+          () => NPC_POST_TEMPLATES[Math.floor(Math.random() * NPC_POST_TEMPLATES.length)]
+        );
+      } else {
+        // No API key — use template posts so the feed stays populated
+        content = NPC_POST_TEMPLATES[Math.floor(Math.random() * NPC_POST_TEMPLATES.length)];
+      }
       const ts = new Date(Date.now() - Math.floor(Math.random() * 7200000)).toISOString();
       generated.push({
         id: `npc_post_${npc.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -210,12 +239,12 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       // Generate fresh NPC posts if: feed is sparse OR no NPC post in the last 24 hours
       const oneDayAgo = Date.now() - 86400000;
       const recentNpcCount = posts.filter((p: any) => p.isNpc && new Date(p.createdAt).getTime() > oneDayAgo).length;
-      if (creds && (posts.length < 8 || recentNpcCount < 2)) {
-        const aiPosts = await _generateNPCPosts(creds);
+      if (posts.length < 8 || recentNpcCount < 2) {
+        const aiPosts = await _generateNPCPosts(creds ?? undefined);
         for (const p of aiPosts) {
           await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }).catch(() => {});
           // Schedule NPC comments on each generated post (non-blocking, staggered delays)
-          setTimeout(() => _generateNPCComments(p.id, p.content, p.user_id, creds).catch(() => {}), 5000 + Math.random() * 25000);
+          if (creds) setTimeout(() => _generateNPCComments(p.id, p.content, p.user_id, creds).catch(() => {}), 5000 + Math.random() * 25000);
         }
         posts = [...aiPosts.map((p: any) => ({ ...p, userId: p.user_id, createdAt: p.created_at })), ...posts];
       } else if (posts.length === 0) {
@@ -332,7 +361,13 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       const { username, password } = body as any;
       const fakeEmail = `${(username as string).toLowerCase().replace(/[^a-z0-9]/g, "_")}@noctis.local`;
       const { data: authData, error: authErr } = await sb.auth.signInWithPassword({ email: fakeEmail, password: password as string });
-      if (authErr) return _apiErr("Invalid credentials.", 401);
+      if (authErr) {
+        const msg = authErr.message?.toLowerCase() || "";
+        if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
+          return _apiErr("⚠️ Email confirmation is enabled in Supabase. Go to Authentication → Settings and disable 'Enable email confirmations', then try again.", 401);
+        }
+        return _apiErr("Invalid credentials.", 401);
+      }
       const userId = authData.user?.id;
       const { data: prof } = await sb.from("profiles").select("*").eq("id", userId).single();
       return _apiOk({ token: "supabase", user: { id: userId, username, profile: prof } });
@@ -427,7 +462,7 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
     const xpMap = _ls<Record<string, number>>("umbra_xp", {});
     const infMap = _ls<Record<string, number>>("umbra_influence", {});
     const npcLeaders = (Object.values(ACCTS) as any[]).filter((u: any) => !u.isGuest && u.un && u.un !== "Lurker")
-      .map((u: any) => ({ id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 50000, influence: infMap[u.id] ?? 0, followers: u.followers ?? 0 }));
+      .map((u: any) => ({ id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? npcXp(u.id, u.tier || "commoner"), wealth: walletMap[u.id] ?? npcWealth(u.id, u.tier || "commoner"), influence: infMap[u.id] ?? 0, followers: u.followers ?? 0 }));
     const realLeaders = (profRows || []).map((u: any) => ({ id: u.id, username: u.username, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 5000, influence: infMap[u.id] ?? 0, followers: u.followers || 0 }));
     const seen = new Set(realLeaders.map((u: any) => u.id));
     const leaderboard = [...realLeaders, ...npcLeaders.filter((u: any) => !seen.has(u.id))].sort((a: any, b: any) => b.xp - a.xp || b.wealth - a.wealth).slice(0, 50);
@@ -585,7 +620,7 @@ function _localstorageHandler(method: string, seg: string[], query: URLSearchPar
     const walletMap = _ls<Record<string, number>>("umbra_wallets", {});
     const infMap = _ls<Record<string, number>>("umbra_influence", {});
     const leaderboard = (Object.values(ACCTS) as any[]).filter((u: any) => !u.isGuest && u.un && u.un !== "Lurker")
-      .map((u: any) => ({ id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 50000, influence: infMap[u.id] ?? 0, followers: u.followers ?? 0 }))
+      .map((u: any) => ({ id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? npcXp(u.id, u.tier || "commoner"), wealth: walletMap[u.id] ?? npcWealth(u.id, u.tier || "commoner"), influence: infMap[u.id] ?? 0, followers: u.followers ?? 0 }))
       .sort((a: any, b: any) => b.xp - a.xp || b.wealth - a.wealth).slice(0, 50);
     return _apiOk({ leaderboard, updatedAt: new Date().toISOString() });
   }
@@ -5069,7 +5104,7 @@ export default function Umbra() {
       if (message) setDmMessages((p) => [...p, message]);
       setDmTxt("");
 
-      if (convUser && (convUser.autoReply || convUser.personality)) {
+      if (convUser && !convUser._real && (convUser.autoReply || convUser.personality)) {
         if (capturedConvId === "trent_morrison") addTrentPoints(uid, 1);
         // Filter history to THIS conversation only (fixes memory bug), sorted oldest-first
         const recentHistory = dmMessages
@@ -5226,7 +5261,7 @@ export default function Umbra() {
       if (!r.ok) { toast("Failed to send image."); return; }
       const { message } = await r.json();
       if (message) setDmMessages((p) => [...p, { ...message, imageUrl }]);
-      if (convUser && (convUser.autoReply || convUser.personality)) {
+      if (convUser && !convUser._real && (convUser.autoReply || convUser.personality)) {
         if (capturedConvId === "trent_morrison") addTrentPoints(uid, 1);
         const recentHistory = dmMessages
           .filter((m: any) => m.fromId === capturedConvId || m.toId === capturedConvId)
@@ -5237,7 +5272,7 @@ export default function Umbra() {
         fetch("/api/ai/npc-reply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: "📷 [sent a photo]", username: user.un, relLevel, trentMemory: capturedMemory }),
+          body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: "📷 [sent a photo]", username: user.un, relLevel, trentMemory: capturedMemory, ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}) }),
         })
           .then(r2 => r2.json())
           .then(async ({ reply }) => {
