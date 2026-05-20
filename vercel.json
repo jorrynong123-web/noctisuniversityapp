@@ -1,0 +1,16 @@
+{
+  "buildCommand": "pnpm install && pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/umbra run build",
+  "outputDirectory": "artifacts/umbra/dist/public",
+  "framework": null,
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "artifacts/api-server/dist/**",
+      "memory": 512,
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/((?!api).*)", "destination": "/index.html" }
+  ]
+}

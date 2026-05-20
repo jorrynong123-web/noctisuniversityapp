@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/User/Downloads/umbra-app/**)",
+      "Read(//c/Users/User/Downloads/umbra-app/artifacts/**)",
+      "Read(//c/Users/User/Downloads/umbra-app/lib/**)",
+      "Bash(gh repo *)",
+      "PowerShell(gh repo view jorrynong123-web/noctisuniversityapp 2>&1)"
+    ]
+  }
+}
