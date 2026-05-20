@@ -209,10 +209,24 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
         const aiPosts = await _generateNPCPosts(creds);
         for (const p of aiPosts) {
           await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }).catch(() => {});
+          // Schedule NPC comments on each generated post (non-blocking, staggered delays)
+          setTimeout(() => _generateNPCComments(p.id, p.content, p.user_id, creds).catch(() => {}), 5000 + Math.random() * 25000);
         }
         posts = [...aiPosts.map((p: any) => ({ ...p, userId: p.user_id, createdAt: p.created_at })), ...posts];
       } else if (posts.length === 0) {
         posts = (INIT_POSTS as any[]).map((p: any) => ({ ...p, userId: p.userId || p.user_id, covenant: p.covenant || p.cov, createdAt: p.createdAt || p.created_at }));
+      }
+      // Fetch all comments for these posts in a single query
+      const postIds = posts.map((p: any) => p.id).filter(Boolean);
+      if (postIds.length > 0) {
+        const { data: commRows } = await sb.from("comments").select("id,post_id,user_id,username,text,parent_id,created_at").in("post_id", postIds).order("created_at");
+        const byPost = new Map<string, any[]>();
+        for (const c of commRows || []) {
+          const list = byPost.get(c.post_id) || [];
+          list.push({ id: c.id, userId: c.user_id, username: c.username, text: c.text, parentId: c.parent_id || null, createdAt: c.created_at });
+          byPost.set(c.post_id, list);
+        }
+        posts = posts.map((p: any) => ({ ...p, comments: byPost.get(p.id) || [] }));
       }
       return _apiOk({ posts });
     }
@@ -232,8 +246,30 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       await sb.from("posts").update(upd).eq("id", seg[1]);
       return _apiOk({ success: true });
     }
-    if (method === "DELETE" && seg[1]) {
+    if (method === "DELETE" && seg[1] && !seg[2]) {
       await sb.from("posts").delete().eq("id", seg[1]);
+      return _apiOk({ success: true });
+    }
+    // ── COMMENTS on a post: /api/posts/:postId/comments[/:commentId] ──────────
+    if (seg[1] && seg[2] === "comments") {
+      if (method === "POST") {
+        const b = body as any;
+        const comment = {
+          id: b.id || `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          post_id: seg[1],
+          user_id: b.userId || b.user_id,
+          username: b.username,
+          text: b.text,
+          parent_id: b.parentId || null,
+          created_at: new Date().toISOString(),
+        };
+        await sb.from("comments").insert(comment).catch(() => {});
+        return _apiOk({ comment: { ...comment, userId: comment.user_id, createdAt: comment.created_at } });
+      }
+      if (method === "DELETE" && seg[3]) {
+        await sb.from("comments").delete().eq("id", seg[3]);
+        return _apiOk({ success: true });
+      }
       return _apiOk({ success: true });
     }
     return _apiOk({ success: true });
@@ -417,6 +453,14 @@ function _localstorageHandler(method: string, seg: string[], query: URLSearchPar
         posts = (INIT_POSTS as any[]).map((p: any) => ({ ...p, userId: p.userId || p.user_id, covenant: p.covenant || p.cov, createdAt: p.createdAt || p.created_at }));
         _lsSet("umbra:posts:v1", posts);
       }
+      // Attach NPC-generated comments stored per-post in localStorage
+      posts = posts.map((p: any) => {
+        const npcCs = _ls<any[]>(`umbra_comments_${p.id}`, []);
+        const existing = p.comments || [];
+        const existingIds = new Set(existing.map((c: any) => c.id));
+        const merged = [...existing, ...npcCs.filter((c: any) => !existingIds.has(c.id))];
+        return merged.length ? { ...p, comments: merged } : p;
+      });
       return _apiOk({ posts });
     }
     if (method === "POST" && !seg[1]) {
@@ -424,6 +468,21 @@ function _localstorageHandler(method: string, seg: string[], query: URLSearchPar
       const post = { ...body, id: (body as any).id || `post_${Date.now()}`, createdAt: new Date().toISOString() };
       _lsSet("umbra:posts:v1", [post, ...posts]);
       return _apiOk({ post });
+    }
+    // ── COMMENTS: /api/posts/:postId/comments[/:commentId] ───────────────────
+    if (seg[1] && seg[2] === "comments") {
+      const key = `umbra_comments_${seg[1]}`;
+      if (method === "POST") {
+        const b = body as any;
+        const comment = { id: b.id || `c_${Date.now()}`, post_id: seg[1], user_id: b.userId || b.user_id, username: b.username, text: b.text, parent_id: b.parentId || null, created_at: new Date().toISOString() };
+        _lsSet(key, [..._ls<any[]>(key, []), comment]);
+        return _apiOk({ comment });
+      }
+      if (method === "DELETE" && seg[3]) {
+        _lsSet(key, _ls<any[]>(key, []).filter((c: any) => c.id !== seg[3]));
+        return _apiOk({ success: true });
+      }
+      return _apiOk({ success: true });
     }
     return _apiOk({ success: true });
   }
@@ -569,6 +628,49 @@ async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Re
   return _localstorageHandler(method, seg, query, body);
 }
 
+// ─── NPC comment generation (called after NPC posts are created) ─────────────
+async function _generateNPCComments(
+  postId: string,
+  postContent: string,
+  authorId: string,
+  creds: ReturnType<typeof getStoredCreds>
+): Promise<void> {
+  const pool = (Object.values(ACCTS) as any[]).filter(
+    (n: any) => n.personality && n.id !== authorId && !n.isGuest && n.un
+  );
+  const count = 1 + Math.floor(Math.random() * 2); // 1–2 comments per NPC post
+  const commenters: any[] = [];
+  const used = new Set<string>([authorId]);
+  while (commenters.length < count && commenters.length < pool.length) {
+    const r = pool[Math.floor(Math.random() * pool.length)];
+    if (r && !used.has(r.id)) { commenters.push(r); used.add(r.id); }
+  }
+  for (const npc of commenters) {
+    let text = AUTO_C[Math.floor(Math.random() * AUTO_C.length)];
+    if (creds) {
+      const msgs = [
+        { role: "system" as const, content: buildNPCPrompt(npc) + "\nWrite ONE short reaction comment (max 1 sentence) on this post. Output only the comment text." },
+        { role: "user" as const, content: `Post: "${postContent}"` },
+      ];
+      text = await callLLM(msgs, creds, { maxTokens: 60, temperature: 0.92 }).catch(() => text);
+    }
+    const comment = {
+      id: `npc_c_${npc.id}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      post_id: postId,
+      user_id: npc.id,
+      username: npc.un,
+      text,
+      created_at: new Date(Date.now() + Math.floor(Math.random() * 1800000)).toISOString(),
+    };
+    if (supabase) {
+      await supabase.from("comments").insert(comment).catch(() => {});
+    } else {
+      const key = `umbra_comments_${postId}`;
+      _lsSet(key, [..._ls<any[]>(key, []), comment]);
+    }
+  }
+}
+
 // Patch window.fetch once at module load — routes /api/* to Supabase + AI shim
 if (typeof window !== "undefined" && !(window as any).__umbraShim) {
   (window as any).__umbraShim = true;
@@ -584,6 +686,17 @@ if (typeof window !== "undefined" && !(window as any).__umbraShim) {
   };
 }
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─── timeAgo — relative time using the user's system clock ───────────────────
+function timeAgo(ms: number | string): string {
+  const d = typeof ms === "string" ? new Date(ms).getTime() : ms;
+  const diff = Date.now() - d;
+  if (diff < 60000) return "Just now";
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
+  return new Date(d).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
 
 /* ═══════════════════════════════════════════════════════
    UMBRA v4 — NOCTIS UNIVERSITY SOCIAL NETWORK
@@ -1170,7 +1283,7 @@ const PostCard = memo(
               )}
               {pu?.badge && <span style={bdg(pu.bColor)}>{pu.badge}</span>}
             </div>
-            <span style={{ fontSize: 11, color: T.muted }}>{post.ts}</span>
+            <span style={{ fontSize: 11, color: T.muted }}>{post._createdAt ? timeAgo(post._createdAt) : post.ts}</span>
           </div>
           {canDel && (
             <div style={{ position: "relative", flexShrink: 0 }}>
@@ -2276,6 +2389,7 @@ export default function Umbra() {
               content: p.content,
               image: p.image || null,
               ts: new Date(p.createdAt).toLocaleDateString("en-GB", { day:"numeric", month:"short", year:"numeric" }),
+              _createdAt: new Date(p.createdAt).getTime(),
               r: { "❤️": p.likes || 0, "💀": p.skulls || 0, "🔥": p.flames || 0 },
               c: (p.comments || []).map((c: any) => ({ id: c.id, uid: c.userId, un: c.username, t: c.text, parentId: c.parentId || null })),
               apexOnly: false,
@@ -2334,6 +2448,7 @@ export default function Umbra() {
           content: p.content,
           image: p.image || null,
           ts: new Date(p.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+          _createdAt: new Date(p.createdAt).getTime(),
           r: { "❤️": p.likes || 0, "💀": p.skulls || 0, "🔥": p.flames || 0 },
           c: (p.comments || []).map((c: any) => ({ id: c.id, uid: c.userId, un: c.username, t: c.text, parentId: c.parentId || null })).filter((c: any) => !deletedCommentIds.includes(c.id)),
           apexOnly: false,
@@ -4564,6 +4679,7 @@ export default function Umbra() {
       content: pTxt.trim(),
       image: pImg.trim() || null,
       ts: "Just now",
+      _createdAt: Date.now(),
       r: {
         "❤️": autoLikes,
         "💀": autoSkulls,
@@ -16222,7 +16338,7 @@ export default function Umbra() {
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
                 <button type="button" onClick={loadDms}
                   style={{ background: "none", border: "none", color: T.muted, fontSize: 12, cursor: "pointer" }}>↻</button>
-                {ACCTS[dmConvId]?.autoReply && (
+                {(ACCTS[dmConvId]?.autoReply || ACCTS[dmConvId]?.personality) && (
                   <button type="button" onClick={() => setShowDmAiPanel(v => !v)}
                     style={{ background: "none", border: `1px solid ${hasUserAiKey ? T.primary : T.muted}`, borderRadius: 4, padding: "3px 8px", color: hasUserAiKey ? T.primary : T.muted, fontSize: 10, cursor: "pointer", letterSpacing: "0.05em", lineHeight: 1.4, fontFamily: "inherit" }}>
                     {hasUserAiKey ? `🔑 ${(aiModel || "Custom").split("/").pop()?.split("-").slice(0,2).join("-") || "Custom"}` : "⚡ Free AI"}
@@ -16246,7 +16362,7 @@ export default function Umbra() {
           )}
 
           {/* ── AI Config Panel (shown when user taps AI badge in NPC DM) ── */}
-          {dmConvId && ACCTS[dmConvId]?.autoReply && showDmAiPanel && (
+          {dmConvId && (ACCTS[dmConvId]?.autoReply || ACCTS[dmConvId]?.personality) && showDmAiPanel && (
             <div style={{ ...card, padding: 14, marginBottom: 10, borderColor: hasUserAiKey ? T.primary : T.muted }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
                 <div>
