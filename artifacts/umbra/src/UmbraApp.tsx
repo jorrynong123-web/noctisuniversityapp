@@ -1715,6 +1715,8 @@ export default function Umbra() {
   const [aiGenLoading, setAiGenLoading] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [regDone, setRegDone] = useState(false);
+  const [regSubmitting, setRegSubmitting] = useState(false);
+  const [regError, setRegError] = useState("");
   const [pendingTags, setPendingTags] = useState<string[]>([]);
 
   // Login
@@ -4497,10 +4499,13 @@ export default function Umbra() {
   );
 
   const finishReg = useCallback(async () => {
+    if (regSubmitting) return;
+    setRegError("");
     if (!newUN.trim() || !newPW.trim()) {
-      toast("Please fill in username and password.");
+      setRegError("Please fill in your username and password before continuing.");
       return;
     }
+    setRegSubmitting(true);
     const cov = qRes || "shadows";
     const cv = COV[cov];
     // Tier is based on tier quiz score (max 45). apexScore stores the total from ansTier.
@@ -4538,11 +4543,12 @@ export default function Umbra() {
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 409 && data.suggestion) {
-          toast(`Username taken — try: ${data.suggestion}`);
+          setRegError(`Username "${cleanUN}" is already taken. Try: ${data.suggestion}`);
           setNewUN(data.suggestion);
         } else {
-          toast(data.error || "Signup failed. Try a different username.");
+          setRegError(data.error || "Signup failed. Try a different username.");
         }
+        setRegSubmitting(false);
         return;
       }
       setJWT(data.token);
@@ -4565,10 +4571,9 @@ export default function Umbra() {
       try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[acct.id] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
       setWalletBalance(startBal);
       finalId = acct.id;
-    } catch {
+    } catch (err: any) {
       // Network is completely down — create a local-only account so the app is still usable.
-      // IMPORTANT: this account will NOT be visible on other devices. The user is warned.
-      toast("⚠️ Could not reach servers. Account created in offline mode — only accessible on this device. Reconnect and sign up again for a cross-device account.");
+      console.error("[finishReg] exception:", err?.message || err);
       const gid = `custom_${newUN.trim().toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
       const newAcct: any = {
         id: gid, un: newUN.trim(), handle: `@${newUN.trim().toLowerCase().replace(/\s+/g, "_")}`,
@@ -4588,14 +4593,17 @@ export default function Umbra() {
       setWalletBalance(startBal);
       setAcctVer(v => v + 1);
       finalId = gid;
+      // Show a warning but still proceed — user gets offline account
+      setRegError("⚠️ Server unreachable — entering in offline mode. This account is device-only.");
     }
+    setRegSubmitting(false);
     setUid(finalId);
     setThemeId("dark");
     saveSession(finalId, "dark");
     setShowWelcome(true);
     setPendingTags([]);
     setScreen("tags");
-  }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, academicFocus, personalityTraits, toast, saveSession]);
+  }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, academicFocus, personalityTraits, regSubmitting, toast, saveSession]);
 
   // ── LOGIN ──
   const doLogin = useCallback(
@@ -6230,13 +6238,19 @@ export default function Umbra() {
                     </div>
                   )}
                 </div>
+                {regError && (
+                  <div style={{ background: "rgba(180,40,40,0.15)", border: "1px solid #7a2020", borderRadius: 8, padding: "10px 16px", marginBottom: 14, textAlign: "center" }}>
+                    <p style={{ color: "#e87878", fontSize: 13, fontFamily: "'Cormorant Garamond',serif", margin: 0 }}>{regError}</p>
+                  </div>
+                )}
                 <button type="button" className="b"
+                  disabled={regSubmitting}
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); finishReg(); }}
-                  style={{ ...btn(true), padding: "14px", fontSize: 15, letterSpacing: "0.15em" }}>
-                  ENTER NOCTIS
+                  style={{ ...btn(true), padding: "14px", fontSize: 15, letterSpacing: "0.15em", opacity: regSubmitting ? 0.6 : 1, cursor: regSubmitting ? "wait" : "pointer" }}>
+                  {regSubmitting ? "ENTERING…" : "ENTER NOCTIS"}
                 </button>
                 <p style={{ fontSize: 11, color: "#6a5840", textAlign: "center", marginTop: 8, fontFamily: "'IM Fell English',serif", fontStyle: "italic" }}>
-                  The shadows await your arrival.
+                  {regSubmitting ? "Creating your account…" : "The shadows await your arrival."}
                 </p>
               </div>
             )}
