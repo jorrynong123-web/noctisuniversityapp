@@ -272,7 +272,11 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       const { username, password, profile = {} } = body as any;
       const { data: existing } = await sb.from("profiles").select("id").eq("username", username).maybeSingle();
       const npcTaken = (Object.values(ACCTS) as any[]).some((u: any) => u.un?.toLowerCase() === (username as string)?.toLowerCase());
-      if (existing || npcTaken) return _apiErr("Username already taken.", 409);
+      if (existing || npcTaken) {
+        const suffix = Math.floor(Math.random() * 900) + 100;
+        const suggestion = `${username}_${suffix}`;
+        return new Response(JSON.stringify({ error: "Username already taken.", suggestion }), { status: 409, headers: { "Content-Type": "application/json" } });
+      }
       const fakeEmail = `${(username as string).toLowerCase().replace(/[^a-z0-9]/g, "_")}@noctis.local`;
       const { data: authData, error: authErr } = await sb.auth.signUp({ email: fakeEmail, password: password as string });
       if (authErr) return _apiErr(authErr.message, 400);
@@ -438,7 +442,15 @@ function _localstorageHandler(method: string, seg: string[], query: URLSearchPar
     if (seg[1] === "signup" && method === "POST") {
       const { username, password, profile = {} } = body as any;
       const taken = (Object.values(ACCTS) as any[]).some((u: any) => u.un?.toLowerCase() === (username as string)?.toLowerCase());
-      if (taken) return _apiErr("Username already taken.", 409);
+      const lsTaken = Object.keys(_ls<Record<string,any>>("umbra_custom_accts", {})).some((id: string) => {
+        const a = _ls<Record<string,any>>("umbra_custom_accts", {})[id];
+        return a?.un?.toLowerCase() === (username as string)?.toLowerCase();
+      });
+      if (taken || lsTaken) {
+        const suffix = Math.floor(Math.random() * 900) + 100;
+        const suggestion = `${username}_${suffix}`;
+        return new Response(JSON.stringify({ error: "Username already taken.", suggestion }), { status: 409, headers: { "Content-Type": "application/json" } });
+      }
       const id = `custom_${(username as string).toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
       const pwStore = _ls<Record<string, string>>("umbra_pw_store", {});
       pwStore[id] = password as string;
@@ -4300,7 +4312,12 @@ export default function Umbra() {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast(data.error || "Signup failed. Try a different username.");
+        if (res.status === 409 && data.suggestion) {
+          toast(`Username taken — try: ${data.suggestion}`);
+          setNewUN(data.suggestion);
+        } else {
+          toast(data.error || "Signup failed. Try a different username.");
+        }
         return;
       }
       setJWT(data.token);
@@ -4565,9 +4582,12 @@ export default function Umbra() {
     const capturedContent = pTxt.trim();
     const capturedAuthor = user.un;
     // NPC AI comments — staggered delays so they appear naturally over time
-    const npcPool = NPC_COMMENTERS.filter(n => n.id !== uid);
+    // Build dynamic commenter pool from ALL students with personality — not fixed list
+    const npcPool = (Object.values(ACCTS) as any[]).filter(
+      (n: any) => n.personality && n.id !== uid && !n.isGuest && n.un
+    );
     const shuffled = [...npcPool].sort(() => Math.random() - 0.5);
-    const commenters = shuffled.slice(0, 2 + Math.floor(Math.random() * 2));
+    const commenters = shuffled.slice(0, 2 + Math.floor(Math.random() * 3)); // 2-4 commenters
     commenters.forEach((npc, idx) => {
       const delay = (20 + Math.random() * 80) * 1000 + idx * (10000 + Math.random() * 15000);
       setTimeout(async () => {
@@ -4928,7 +4948,7 @@ export default function Umbra() {
       if (message) setDmMessages((p) => [...p, message]);
       setDmTxt("");
 
-      if (convUser?.autoReply) {
+      if (convUser && (convUser.autoReply || convUser.personality)) {
         if (capturedConvId === "trent_morrison") addTrentPoints(uid, 1);
         // Filter history to THIS conversation only (fixes memory bug), sorted oldest-first
         const recentHistory = dmMessages
@@ -5028,19 +5048,35 @@ export default function Umbra() {
 
   const compressImage = (file: File, maxPx = 900, quality = 0.78): Promise<string> =>
     new Promise((resolve, reject) => {
+      const MAX_BYTES = 512000; // hard 500 KB ceiling
       const reader = new FileReader();
       reader.onload = (ev) => {
         const src = ev.target?.result as string;
         if (!src) return reject(new Error("read failed"));
         const img = new Image();
         img.onload = () => {
-          const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
-          const w = Math.round(img.width * scale);
-          const h = Math.round(img.height * scale);
-          const canvas = document.createElement("canvas");
-          canvas.width = w; canvas.height = h;
-          canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", quality));
+          let scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+          let q = quality;
+          const encode = (): string => {
+            const w = Math.round(img.width * scale);
+            const h = Math.round(img.height * scale);
+            const canvas = document.createElement("canvas");
+            canvas.width = w; canvas.height = h;
+            canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+            return canvas.toDataURL("image/jpeg", q);
+          };
+          let dataUrl = encode();
+          // base64 string length * 0.75 ≈ byte size
+          while (dataUrl.length * 0.75 > MAX_BYTES && q > 0.15) {
+            q = Math.max(0.15, q - 0.1);
+            dataUrl = encode();
+          }
+          // If still over, shrink pixel dimensions
+          while (dataUrl.length * 0.75 > MAX_BYTES && scale > 0.15) {
+            scale *= 0.75;
+            dataUrl = encode();
+          }
+          resolve(dataUrl);
         };
         img.onerror = reject;
         img.src = src;
@@ -5067,7 +5103,7 @@ export default function Umbra() {
       if (!r.ok) { toast("Failed to send image."); return; }
       const { message } = await r.json();
       if (message) setDmMessages((p) => [...p, { ...message, imageUrl }]);
-      if (convUser?.autoReply) {
+      if (convUser && (convUser.autoReply || convUser.personality)) {
         if (capturedConvId === "trent_morrison") addTrentPoints(uid, 1);
         const recentHistory = dmMessages
           .filter((m: any) => m.fromId === capturedConvId || m.toId === capturedConvId)
@@ -5078,7 +5114,7 @@ export default function Umbra() {
         fetch("/api/ai/npc-reply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: "📷 [sent a photo]", username: user.un, relLevel, trentMemory: capturedMemory, ...(ACCTS[capturedConvId]?.autoReply && hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}) }),
+          body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: "📷 [sent a photo]", username: user.un, relLevel, trentMemory: capturedMemory }),
         })
           .then(r2 => r2.json())
           .then(async ({ reply }) => {
