@@ -93,16 +93,17 @@ async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promi
 
   if (sub === "npc-comment") {
     const npcs = (body.npcs as any[]) || [];
-    const post = body.post as any;
+    // App sends postContent/postAuthor directly OR nested as body.post
+    const postText = (body.postContent as string) || (body.post as any)?.content || (body.post as any)?.text || "";
+    const postAuthor = (body.postAuthor as string) || "";
     if (!creds || npcs.length === 0) {
       return _apiOk({ comments: npcs.map(() => ({ text: AUTO_C[Math.floor(Math.random() * AUTO_C.length)] })) });
     }
-    const postText = post?.content || post?.text || "";
     const comments = await Promise.all(
       npcs.slice(0, 4).map(async (npc: any) => {
         const msgs = [
-          { role: "system" as const, content: buildNPCPrompt(npc) + "\nWrite ONE short comment (1 sentence max) on this post. Output only the comment text." },
-          { role: "user" as const, content: `Post: "${postText}"` },
+          { role: "system" as const, content: buildNPCPrompt(npc) + "\nWrite ONE short reaction comment (1 sentence max) on this post. Output only the comment text, nothing else." },
+          { role: "user" as const, content: postAuthor ? `Post by ${postAuthor}: "${postText}"` : `Post: "${postText}"` },
         ];
         const text = await callLLM(msgs, creds, { maxTokens: 60, temperature: 0.9 }).catch(
           () => AUTO_C[Math.floor(Math.random() * AUTO_C.length)]
@@ -200,17 +201,18 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       const { data, error } = await sb.from("posts").select("*").order("created_at", { ascending: false }).limit(100);
       if (error) return _apiErr(error.message);
       let posts = (data || []).map((p: any) => ({ id: p.id, userId: p.user_id, username: p.username, content: p.content, image: p.image, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes || 0, skulls: p.skulls || 0, flames: p.flames || 0, isNpc: p.is_npc, createdAt: p.created_at }));
-      if (posts.length < 8) {
-        const creds = getStoredCreds();
-        if (creds) {
-          const aiPosts = await _generateNPCPosts(creds);
-          for (const p of aiPosts) {
-            await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }).catch(() => {});
-          }
-          posts = [...aiPosts.map((p: any) => ({ ...p, userId: p.user_id, createdAt: p.created_at })), ...posts];
-        } else if (posts.length === 0) {
-          posts = (INIT_POSTS as any[]).map((p: any) => ({ ...p, userId: p.userId || p.user_id, covenant: p.covenant || p.cov, createdAt: p.createdAt || p.created_at }));
+      const creds = getStoredCreds();
+      // Generate fresh NPC posts if: feed is sparse OR no NPC post in the last 24 hours
+      const oneDayAgo = Date.now() - 86400000;
+      const recentNpcCount = posts.filter((p: any) => p.isNpc && new Date(p.createdAt).getTime() > oneDayAgo).length;
+      if (creds && (posts.length < 8 || recentNpcCount < 2)) {
+        const aiPosts = await _generateNPCPosts(creds);
+        for (const p of aiPosts) {
+          await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }).catch(() => {});
         }
+        posts = [...aiPosts.map((p: any) => ({ ...p, userId: p.user_id, createdAt: p.created_at })), ...posts];
+      } else if (posts.length === 0) {
+        posts = (INIT_POSTS as any[]).map((p: any) => ({ ...p, userId: p.userId || p.user_id, covenant: p.covenant || p.cov, createdAt: p.createdAt || p.created_at }));
       }
       return _apiOk({ posts });
     }
