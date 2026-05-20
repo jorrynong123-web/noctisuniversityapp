@@ -24,12 +24,16 @@ create table if not exists public.profiles (
   rep              text default 'New Arrival',
   followers        int  default 0,
   following        int  default 0,
+  xp               bigint default 0,
   traits           jsonb default '[]',
   trent_memory     text default '',
   can_see_auction  boolean default false,
   can_see_relief   boolean default false,
   created_at       timestamptz default now()
 );
+
+-- Add xp column if it doesn't already exist (for upgrading from v1)
+alter table public.profiles add column if not exists xp bigint default 0;
 
 -- ── Posts ─────────────────────────────────────────────────────────────────────
 create table if not exists public.posts (
@@ -178,3 +182,12 @@ create index if not exists messages_from_id_idx  on public.messages(from_id);
 create index if not exists messages_to_id_idx    on public.messages(to_id);
 create index if not exists comments_post_id_idx  on public.comments(post_id);
 create index if not exists profiles_username_idx on public.profiles(lower(username));
+
+-- ── Fix stuck "unconfirmed" accounts ─────────────────────────────────────────
+-- If email confirmation was enabled when accounts were created, they are stuck
+-- in an unconfirmed state even after you disable the setting.  This query fixes
+-- ALL existing accounts so cross-device login works immediately.
+-- Safe to run multiple times (it only touches rows where the field is NULL).
+update auth.users
+  set email_confirmed_at = now()
+  where email_confirmed_at is null;

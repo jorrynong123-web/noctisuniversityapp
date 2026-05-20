@@ -353,9 +353,14 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       const userId = authData.user?.id;
       if (!userId) return _apiErr("Auth failed", 500);
       const prof: any = profile || {};
-      await sb.from("profiles").insert({ id: userId, username, pic: prof.pic || "🌑", bio: prof.bio || "", cov: prof.covenant || prof.cov || "silk", tier: prof.tier || "commoner", major: prof.major || "Undeclared", year: prof.year || "Freshman", wealth: prof.wealth || "Self-Made", rep: prof.rep || "New Arrival", followers: 0, following: 0, traits: [] });
+      const profileRow = { id: userId, username, pic: prof.pic || "🌑", bio: prof.bio || "", cov: prof.covenant || prof.cov || "silk", tier: prof.tier || "commoner", major: prof.major || "Undeclared", year: prof.year || "Freshman", wealth: prof.wealth || "Self-Made", rep: prof.rep || "New Arrival", followers: 0, following: 0, xp: 0, traits: [] };
+      const { error: profErr } = await sb.from("profiles").insert(profileRow);
+      if (profErr) {
+        // Profile table may not exist — provide a clear message so the user knows to run schema.sql
+        return _apiErr(`Account created in auth but profile save failed: ${profErr.message}. Run the schema.sql script in your Supabase SQL Editor first, then sign up again.`, 500);
+      }
       await sb.from("wallets").insert({ user_id: userId, balance: 5000 }).catch(() => {});
-      return _apiOk({ token: "supabase", user: { id: userId, username, profile: prof } });
+      return _apiOk({ token: "supabase", user: { id: userId, username, profile: { ...profileRow, covenant: profileRow.cov } } });
     }
     if (seg[1] === "login" && method === "POST") {
       const { username, password } = body as any;
@@ -364,12 +369,31 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       if (authErr) {
         const msg = authErr.message?.toLowerCase() || "";
         if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
-          return _apiErr("⚠️ Email confirmation is enabled in Supabase. Go to Authentication → Settings and disable 'Enable email confirmations', then try again.", 401);
+          return _apiErr("⚠️ Your account isn't confirmed yet. Run the schema.sql again in Supabase SQL Editor — it contains a fix that confirms all existing accounts.", 401);
         }
-        return _apiErr("Invalid credentials.", 401);
+        if (msg.includes("invalid login") || msg.includes("invalid credentials") || msg.includes("wrong password")) {
+          return _apiErr("Wrong username or password. If you created this account on another device, run schema.sql in Supabase first, then try again.", 401);
+        }
+        return _apiErr(`Login failed: ${authErr.message}`, 401);
       }
       const userId = authData.user?.id;
-      const { data: prof } = await sb.from("profiles").select("*").eq("id", userId).single();
+      let { data: rawProf } = await sb.from("profiles").select("*").eq("id", userId).maybeSingle();
+      // If profile doesn't exist yet (e.g. signup failed mid-way), auto-create it now
+      if (!rawProf) {
+        const fallbackRow = { id: userId, username, pic: "🌑", bio: "", cov: "silk", tier: "commoner", major: "Undeclared", year: "Freshman", wealth: "Self-Made", rep: "New Arrival", followers: 0, following: 0, xp: 0, traits: [] };
+        await sb.from("profiles").insert(fallbackRow).catch(() => {});
+        await sb.from("wallets").insert({ user_id: userId, balance: 5000 }).catch(() => {});
+        rawProf = fallbackRow as any;
+      }
+      // Map snake_case Supabase columns → camelCase fields the client expects
+      const prof = rawProf ? {
+        ...rawProf,
+        covenant: rawProf.cov,
+        canSeeAuction: rawProf.can_see_auction ?? false,
+        canSeeRelief: rawProf.can_see_relief ?? false,
+        trentMemory: rawProf.trent_memory ?? "",
+        xp: rawProf.xp ?? 0,
+      } : null;
       return _apiOk({ token: "supabase", user: { id: userId, username, profile: prof } });
     }
     if (seg[1] === "profile") {
@@ -456,14 +480,15 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
 
   // ── LEADERBOARD ─────────────────────────────────────────────────────────────
   if (seg[0] === "leaderboard") {
-    const { data: profRows } = await sb.from("profiles").select("id,username,pic,cov,tier,followers").limit(200);
+    const { data: profRows } = await sb.from("profiles").select("id,username,pic,cov,tier,followers,xp").limit(200);
     const { data: walletRows } = await sb.from("wallets").select("user_id,balance").limit(200);
     const walletMap = Object.fromEntries((walletRows || []).map((w: any) => [w.user_id, w.balance]));
     const xpMap = _ls<Record<string, number>>("umbra_xp", {});
     const infMap = _ls<Record<string, number>>("umbra_influence", {});
-    const npcLeaders = (Object.values(ACCTS) as any[]).filter((u: any) => !u.isGuest && u.un && u.un !== "Lurker")
-      .map((u: any) => ({ id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? npcXp(u.id, u.tier || "commoner"), wealth: walletMap[u.id] ?? npcWealth(u.id, u.tier || "commoner"), influence: infMap[u.id] ?? 0, followers: u.followers ?? 0 }));
-    const realLeaders = (profRows || []).map((u: any) => ({ id: u.id, username: u.username, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 5000, influence: infMap[u.id] ?? 0, followers: u.followers || 0 }));
+    const npcLeaders = (Object.values(ACCTS) as any[]).filter((u: any) => !u.isGuest && !u._real && u.un && u.un !== "Lurker")
+      .map((u: any) => ({ id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: xpMap[u.id] ?? npcXp(u.id, u.tier || "commoner"), wealth: walletMap[u.id] ?? npcWealth(u.id, u.tier || "commoner"), influence: infMap[u.id] ?? 0, followers: u.followers ?? 0, isNpc: true }));
+    // Real users: use Supabase xp column first, then localStorage fallback
+    const realLeaders = (profRows || []).map((u: any) => ({ id: u.id, username: u.username, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner", xp: (u.xp ?? 0) || xpMap[u.id] || 0, wealth: walletMap[u.id] ?? 5000, influence: infMap[u.id] ?? 0, followers: u.followers || 0, isNpc: false }));
     const seen = new Set(realLeaders.map((u: any) => u.id));
     const leaderboard = [...realLeaders, ...npcLeaders.filter((u: any) => !seen.has(u.id))].sort((a: any, b: any) => b.xp - a.xp || b.wealth - a.wealth).slice(0, 50);
     return _apiOk({ leaderboard, updatedAt: new Date().toISOString() });
@@ -2205,7 +2230,19 @@ export default function Umbra() {
     try { const d = JSON.parse(localStorage.getItem("umbra_xp") || "{}"); d[id] = xp; localStorage.setItem("umbra_xp", JSON.stringify(d)); } catch {}
   }, []);
   const addXP = useCallback((amount: number) => {
-    setUserXP(prev => { const n = prev + amount; saveXPToLS(uid, n); return n; });
+    setUserXP(prev => {
+      const n = prev + amount;
+      saveXPToLS(uid, n);
+      // Sync XP to Supabase so the leaderboard shows it on all devices
+      if (uid && !(ACCTS[uid] as any)?._npc) {
+        fetch("/api/auth/profile", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: uid, xp: n }),
+        }).catch(() => {});
+      }
+      return n;
+    });
   }, [uid, saveXPToLS]);
   const enrollClass = useCallback((classId: string) => {
     setEnrolledClasses(prev => {
@@ -2569,6 +2606,7 @@ export default function Umbra() {
       wealth: "Self-Made",
       rep: "New Arrival",
       isReal: true,
+      _real: true,
     };
   };
 
@@ -4496,7 +4534,9 @@ export default function Umbra() {
       setWalletBalance(startBal);
       finalId = acct.id;
     } catch {
-      // Fallback: local-only account if API is unavailable
+      // Network is completely down — create a local-only account so the app is still usable.
+      // IMPORTANT: this account will NOT be visible on other devices. The user is warned.
+      toast("⚠️ Could not reach servers. Account created in offline mode — only accessible on this device. Reconnect and sign up again for a cross-device account.");
       const gid = `custom_${newUN.trim().toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
       const newAcct: any = {
         id: gid, un: newUN.trim(), handle: `@${newUN.trim().toLowerCase().replace(/\s+/g, "_")}`,
@@ -4596,9 +4636,10 @@ export default function Umbra() {
         }
         setJWT(data.token);
         const p = data.user?.profile || {};
+        // Profile comes back with camelCase mappings from the server (cov→covenant etc.)
         const acct = buildRealUser({
           ...data.user,
-          covenant: p.covenant as string | undefined,
+          covenant: (p.covenant || p.cov) as string | undefined,
           tier: p.tier as string | undefined,
           pic: p.pic as string | undefined,
           bio: p.bio as string | undefined,
@@ -4607,9 +4648,18 @@ export default function Umbra() {
         if (p.year) (acct as any).year = p.year;
         if (p.wealth) (acct as any).wealth = p.wealth;
         if (p.rep) (acct as any).rep = p.rep;
-        if (p.canSeeAuction !== undefined) (acct as any).canSeeAuction = p.canSeeAuction;
-        if (p.canSeeRelief !== undefined) (acct as any).canSeeRelief = p.canSeeRelief;
+        // canSeeAuction / canSeeRelief — accept both camelCase and snake_case
+        const csa = p.canSeeAuction ?? p.can_see_auction;
+        const csr = p.canSeeRelief ?? p.can_see_relief;
+        if (csa !== undefined) (acct as any).canSeeAuction = csa;
+        if (csr !== undefined) (acct as any).canSeeRelief = csr;
         if (typeof p.trentMemory === "string" && p.trentMemory.trim()) setTrentMemory(p.trentMemory);
+        else if (typeof p.trent_memory === "string" && p.trent_memory.trim()) setTrentMemory(p.trent_memory);
+        // Restore XP from Supabase (cross-device) — also save to localStorage so it persists locally
+        if (typeof p.xp === "number" && p.xp > 0) {
+          setUserXP(p.xp);
+          saveXPToLS(data.user.id, p.xp);
+        }
         saveRealUser(acct);
         setUid(acct.id);
         setThemeId("dark");
@@ -5122,9 +5172,12 @@ export default function Umbra() {
           signal: abortCtrl.signal,
         })
           .then(r2 => r2.json())
-          .then(async ({ reply }) => {
+          .then(async ({ reply: rawReply }) => {
             clearTimeout(timeoutId);
-            if (!reply) return;
+            // Never silently drop — fall back to a short in-character line if the LLM returned nothing
+            const reply = rawReply || (capturedConvId === "trent_morrison"
+              ? TRENT_REPLIES_L0[Math.floor(Math.random() * TRENT_REPLIES_L0.length)] || "."
+              : "...");
             const autoPayload = { fromId: capturedConvId, fromUsername: convUser.un, fromPic: convUser.pic || "🌑", toId: uid, toUsername: user.un, text: reply };
             const ar = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoPayload) });
             const { message: autoMsg } = await ar.json();
@@ -5275,8 +5328,10 @@ export default function Umbra() {
           body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: "📷 [sent a photo]", username: user.un, relLevel, trentMemory: capturedMemory, ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}) }),
         })
           .then(r2 => r2.json())
-          .then(async ({ reply }) => {
-            if (!reply) return;
+          .then(async ({ reply: rawReply2 }) => {
+            const reply = rawReply2 || (capturedConvId === "trent_morrison"
+              ? TRENT_REPLIES_L0[Math.floor(Math.random() * TRENT_REPLIES_L0.length)] || "."
+              : "...");
             const autoPayload = { fromId: capturedConvId, fromUsername: convUser.un, fromPic: convUser.pic || "🌑", toId: uid, toUsername: user.un, text: reply };
             const ar = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoPayload) });
             const { message: autoMsg } = await ar.json();
