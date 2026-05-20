@@ -84,9 +84,15 @@ export function buildProfPrompt(
   prof: any,
   context?: { username?: string; studentTier?: string; studentCov?: string }
 ): string {
-  const favCov: string | undefined = prof.favCov;
-  const disfavCov: string | undefined = prof.disfavCov;
-  const favTier: string | undefined = prof.favTier;
+  // favCov / disfavCov / favTier in profs.ts can be arrays OR strings — normalise to string
+  const toStr = (v: any): string | undefined => {
+    if (!v) return undefined;
+    if (Array.isArray(v)) return v.length > 0 ? String(v[0]) : undefined;
+    return String(v);
+  };
+  const favCov = toStr(prof.favCov);
+  const disfavCov = toStr(prof.disfavCov ?? prof.penalCov);
+  const favTier = toStr(prof.favTier);
   const secret: string | undefined = prof.secret;
 
   const studentCov = context?.studentCov || "";

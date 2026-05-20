@@ -61,17 +61,28 @@ async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promi
                    : Array.isArray(body.history) ? (body.history as any[]) : [];
     const userMsg = (body.message as string) || (body.userMessage as string) || "";
 
-    // Template fallback when no creds or no profile
-    if (!creds || !npc) {
+    // Template fallback when no creds — use character-specific lines where available
+    if (!creds) {
       let reply = "";
       if (npcId === "trent_morrison") {
         const pools = [TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5];
         const pool = pools[relLevel] || TRENT_REPLIES_L0;
         reply = pool[Math.floor(Math.random() * pool.length)] || "...";
+      } else if (isProfDM && Array.isArray(npc?.dms) && npc.dms.length > 0) {
+        // Professors have a curated dms[] array — use it for in-character fallback
+        reply = npc.dms[Math.floor(Math.random() * npc.dms.length)];
+      } else if (Array.isArray(npc?.replies) && npc.replies.length > 0) {
+        reply = npc.replies[Math.floor(Math.random() * npc.replies.length)];
       } else {
         const fallbacks = ["Interesting. Go on.", "I wasn't expecting that from you.", "There's more to this than you're saying.", "You always find a way to surprise me.", "Tonight is complicated. Let's talk another time.", "I've been thinking about what you said earlier.", "You know how this ends, right?", "Don't read into this. I'm just being polite."];
         reply = fallbacks[Math.floor(Math.random() * fallbacks.length)];
       }
+      return _apiOk({ reply, message: reply });
+    }
+    // npc profile is required for building the prompt — fall back if missing
+    if (!npc) {
+      const fb = ["I'm unavailable right now.", "We'll speak another time.", "Not now.", "..."];
+      const reply = fb[Math.floor(Math.random() * fb.length)];
       return _apiOk({ reply, message: reply });
     }
 
@@ -9380,7 +9391,7 @@ export default function Umbra() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                profId: p.id, profName: p.name, archetype: p.archetype,
+                profId: p.id, profName: p.name, profProfile: p, archetype: p.archetype,
                 personality: p.personality, dms: p.dms,
                 studentName: (user as any)?.un || "Student",
                 studentTier: (user as any)?.tier || "merit",
@@ -9388,6 +9399,7 @@ export default function Umbra() {
                 favScore,
                 history: newHistory.slice(-6),
                 message: msg,
+                ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}),
               }),
             });
             const data = await res.json();
