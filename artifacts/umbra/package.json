@@ -73,5 +73,11 @@
     "vite": "catalog:",
     "wouter": "^3.3.5",
     "zod": "catalog:"
+  },
+  "dependencies": {
+    "@esbuild/win32-x64": "^0.27.3",
+    "@rollup/rollup-win32-x64-msvc": "^4.60.4",
+    "@tailwindcss/oxide-win32-x64-msvc": "^4.3.0",
+    "lightningcss-win32-x64-msvc": "1.32.0"
   }
 }

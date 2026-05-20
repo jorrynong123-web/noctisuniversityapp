@@ -20,6 +20,238 @@ import { LOTS, INIT_CONFS, PARTIES, TWISTED, LIVES, QNA_INIT, ANNOUNCEMENTS, REL
 import { SHOP_ITEMS, DAILY_DEALS, FLASH_SALES, PORTAL_LISTINGS, TRENT_REL_LEVELS, TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5, TRENT_GIFT_REPLIES, TRENT_PIC_REPLIES } from "./data/shopAndTrent";
 import { AUTO_C, AUTO_UN, NPC_COMMENTERS, UNSPLASH_PLACEHOLDERS } from "./data/feedData";
 
+// ─── LOCAL API SHIM ──────────────────────────────────────────────────────────
+// Intercepts all /api/* fetch calls and handles them with localStorage so the
+// app runs completely standalone — no backend, no Vercel, no Railway needed.
+// ─────────────────────────────────────────────────────────────────────────────
+function _ls<T>(key: string, def: T): T {
+  try { return JSON.parse(localStorage.getItem(key) || "null") ?? def; } catch { return def; }
+}
+function _lsSet(key: string, val: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
+function _apiOk(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+function _apiErr(msg: string, status = 400): Response {
+  return new Response(JSON.stringify({ error: msg }), { status, headers: { "Content-Type": "application/json" } });
+}
+
+async function _localAPIHandler(url: string, opts: RequestInit = {}): Promise<Response> {
+  const method = (opts.method || "GET").toUpperCase();
+  const qMark = url.indexOf("?");
+  const path = qMark !== -1 ? url.slice(0, qMark) : url;
+  const query = qMark !== -1 ? new URLSearchParams(url.slice(qMark + 1)) : new URLSearchParams();
+  const seg = path.replace(/^\/api\//, "").split("/");
+  let body: Record<string, unknown> = {};
+  try { if (opts.body) body = JSON.parse(opts.body as string); } catch {}
+
+  // ── MESSAGES ──────────────────────────────────────────────────────────────
+  if (seg[0] === "messages") {
+    const allMsgs = _ls<unknown[]>("umbra_local_msgs", []);
+    if (method === "GET" && seg[1]) {
+      const uid = seg[1];
+      return _apiOk({ messages: allMsgs.filter((m: any) => m.fromId === uid || m.toId === uid) });
+    }
+    if (method === "POST") {
+      const msg = { ...body, id: `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`, createdAt: new Date().toISOString() };
+      _lsSet("umbra_local_msgs", [...allMsgs, msg]);
+      return _apiOk({ message: msg });
+    }
+  }
+
+  // ── POSTS ──────────────────────────────────────────────────────────────────
+  if (seg[0] === "posts") {
+    if (method === "GET" && !seg[1]) return _apiOk({ posts: _ls("umbra:posts:v1", []) });
+    return _apiOk({ success: true }); // react/comment/delete all handled locally
+  }
+
+  // ── USERS ──────────────────────────────────────────────────────────────────
+  if (seg[0] === "users") {
+    if (method === "GET" && !seg[1]) {
+      const q = query.get("q") || "";
+      const limit = Math.min(parseInt(query.get("limit") || "200"), 500);
+      const users = (Object.values(ACCTS) as any[])
+        .filter((u: any) => !u.isGuest && u.un && (!q || u.un.toLowerCase().includes(q.toLowerCase())))
+        .slice(0, limit)
+        .map((u: any) => ({
+          id: u.id, username: u.un, followers: u.followers ?? 0, following: u.following ?? 0,
+          profile: { pic: u.pic, bio: u.bio, covenant: u.cov, tier: u.tier, traits: u.traits || [] },
+        }));
+      return _apiOk({ users });
+    }
+    if (method === "PATCH" && seg[1] && seg[2] === "profile") {
+      if (ACCTS[seg[1]]) Object.assign(ACCTS[seg[1]], body);
+      return _apiOk({ success: true });
+    }
+  }
+
+  // ── AUTH ───────────────────────────────────────────────────────────────────
+  if (seg[0] === "auth") {
+    if (seg[1] === "signup" && method === "POST") {
+      const { username, password, profile = {} } = body as any;
+      const taken = (Object.values(ACCTS) as any[]).some((u: any) => u.un?.toLowerCase() === (username as string)?.toLowerCase());
+      if (taken) return _apiErr("Username already taken.", 409);
+      const id = `custom_${(username as string).toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
+      const pwStore = _ls<Record<string, string>>("umbra_pw_store", {});
+      pwStore[id] = password as string;
+      _lsSet("umbra_pw_store", pwStore);
+      return _apiOk({ token: "local", user: { id, username, profile } });
+    }
+    if (seg[1] === "login" && method === "POST") {
+      const { username, password } = body as any;
+      const pwStore = _ls<Record<string, string>>("umbra_pw_store", {});
+      const customAccts = _ls<Record<string, any>>("umbra_custom_accts", {});
+      const acct = (Object.values(customAccts) as any[]).find(
+        (u: any) => u.un?.toLowerCase() === (username as string)?.toLowerCase() && pwStore[u.id] === password
+      );
+      if (!acct) return _apiErr("Invalid credentials.", 401);
+      return _apiOk({ token: "local", user: { id: acct.id, username: acct.un, profile: { pic: acct.pic, bio: acct.bio, covenant: acct.cov, tier: acct.tier } } });
+    }
+    if (seg[1] === "profile") {
+      if (method === "PUT") {
+        const { userId, ...rest } = body as any;
+        if (userId && ACCTS[userId]) {
+          Object.assign(ACCTS[userId], rest);
+          const saved = _ls<Record<string, any>>("umbra_custom_accts", {});
+          if (saved[userId]) { Object.assign(saved[userId], rest); _lsSet("umbra_custom_accts", saved); }
+        }
+        return _apiOk({ success: true });
+      }
+      if (method === "GET" && seg[2]) {
+        const acct = ACCTS[seg[2]] as any;
+        if (!acct) return _apiErr("Not found", 404);
+        return _apiOk({ profile: { pic: acct.pic, bio: acct.bio, traits: acct.traits || [], covenant: acct.cov, tier: acct.tier, major: acct.major, year: acct.year, wealth: acct.wealth, rep: acct.rep } });
+      }
+    }
+  }
+
+  // ── AUCTIONS ───────────────────────────────────────────────────────────────
+  if (seg[0] === "auctions") {
+    const auctions = _ls<any[]>("umbra_local_auctions", []);
+    if (method === "GET" && !seg[1]) return _apiOk({ auctions });
+    if (method === "GET" && seg[1] === "history") return _apiOk({ auctions: _ls("umbra_local_auc_hist", []) });
+    if (method === "GET" && seg[1] === "user" && seg[2]) return _apiOk({ auction: auctions.find((a: any) => a.subjectId === seg[2]) || null });
+    if (method === "POST" && !seg[1]) {
+      const auction = { ...body, id: `auc_${Date.now()}`, createdAt: new Date().toISOString(), bids: [], topBid: (body as any).startingBid || 500, topBidder: null };
+      _lsSet("umbra_local_auctions", [...auctions, auction]);
+      return _apiOk({ auction });
+    }
+    if (method === "POST" && seg[2] === "bid") {
+      const idx = auctions.findIndex((a: any) => a.id === seg[1]);
+      if (idx === -1) return _apiErr("Not found", 404);
+      const bid = { ...body, id: `bid_${Date.now()}`, createdAt: new Date().toISOString() };
+      auctions[idx] = { ...auctions[idx], bids: [...(auctions[idx].bids || []), bid], topBid: (body as any).amount, topBidder: (body as any).bidderId };
+      _lsSet("umbra_local_auctions", auctions);
+      return _apiOk({ success: true, auction: auctions[idx] });
+    }
+  }
+
+  // ── WALLET ─────────────────────────────────────────────────────────────────
+  if (seg[0] === "wallet") {
+    if (method === "GET" && seg[1]) {
+      const w = _ls<Record<string, number>>("umbra_wallets", {});
+      return _apiOk({ balance: w[seg[1]] ?? null });
+    }
+    if (method === "POST" && seg[1] === "transfer") {
+      const { toId, amount } = body as any;
+      const w = _ls<Record<string, number>>("umbra_wallets", {});
+      const newBal = (w[toId as string] ?? 5000) + (amount as number || 0);
+      w[toId as string] = newBal;
+      _lsSet("umbra_wallets", w);
+      return _apiOk({ toBalance: newBal });
+    }
+  }
+
+  // ── BIDS ───────────────────────────────────────────────────────────────────
+  if (seg[0] === "bids") {
+    if (method === "GET") return _apiOk({ bids: _ls("umbra_local_bids", []) });
+    if (method === "POST") {
+      _lsSet("umbra_local_bids", [..._ls<any[]>("umbra_local_bids", []), { ...body, id: `bid_${Date.now()}`, createdAt: new Date().toISOString() }]);
+      return _apiOk({ success: true });
+    }
+  }
+
+  // ── LEADERBOARD ────────────────────────────────────────────────────────────
+  if (seg[0] === "leaderboard") {
+    const xpMap = _ls<Record<string, number>>("umbra_xp", {});
+    const walletMap = _ls<Record<string, number>>("umbra_wallets", {});
+    const infMap = _ls<Record<string, number>>("umbra_influence", {});
+    const leaderboard = (Object.values(ACCTS) as any[])
+      .filter((u: any) => !u.isGuest && u.un && u.un !== "Lurker")
+      .map((u: any) => ({
+        id: u.id, username: u.un, pic: u.pic, covenant: u.cov, tier: u.tier || "commoner",
+        xp: xpMap[u.id] ?? 0, wealth: walletMap[u.id] ?? 50000, influence: infMap[u.id] ?? 0, followers: u.followers ?? 0,
+      }))
+      .sort((a: any, b: any) => b.xp - a.xp || b.wealth - a.wealth)
+      .slice(0, 50);
+    return _apiOk({ leaderboard, updatedAt: new Date().toISOString() });
+  }
+
+  // ── AI — template-based responses ──────────────────────────────────────────
+  if (seg[0] === "ai") {
+    const sub = seg[1];
+    if (sub === "npc-reply" || sub === "npc-initiate" || sub === "worship-dm" || sub === "prof-dm") {
+      const npcId = (body as any)?.npcId || "";
+      const relLevel = Math.min((body as any)?.relLevel ?? 0, 5);
+      let reply = "";
+      if (npcId === "trent_morrison") {
+        const pools = [TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5];
+        const pool = pools[relLevel] || TRENT_REPLIES_L0;
+        reply = pool[Math.floor(Math.random() * pool.length)] || "...";
+      } else {
+        const fallbacks = [
+          "Interesting. Go on.",
+          "I wasn't expecting that from you.",
+          "There's more to this than you're saying.",
+          "You always find a way to surprise me.",
+          "Tonight is complicated. Let's talk another time.",
+          "I've been thinking about what you said earlier.",
+          "You know how this ends, right?",
+          "Don't read into this. I'm just being polite.",
+        ];
+        reply = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+      }
+      return _apiOk({ reply, message: reply });
+    }
+    if (sub === "npc-comment") {
+      const npcs: any[] = (body as any)?.npcs || [];
+      return _apiOk({ comments: npcs.map(() => ({ text: AUTO_C[Math.floor(Math.random() * AUTO_C.length)] })) });
+    }
+    if (sub === "npc-memory") {
+      const existing = (body as any)?.existingMemory || "";
+      const last = ((body as any)?.lastExchange || []).map((e: any) => e.text).join(" | ");
+      return _apiOk({ memory: existing ? `${existing} | ${last}` : last });
+    }
+    // gossip/rumour — return 503 so the existing template fallback in the catch block fires
+    if (sub === "gossip" || sub === "generate-rumour") return _apiErr("offline", 503);
+    return _apiOk({ success: true, reply: "", snippets: [], comments: [], message: "" });
+  }
+
+  // ── STORAGE — return error so profile pic upload falls back to compressImage()
+  if (seg[0] === "storage") return _apiErr("local mode", 503);
+
+  return _apiErr("Not found", 404);
+}
+
+// Patch window.fetch once at module load — routes /api/* to localStorage
+if (typeof window !== "undefined" && !(window as any).__umbraLocalAPI) {
+  (window as any).__umbraLocalAPI = true;
+  const _origFetch = window.fetch.bind(window);
+  (window as any).fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === "string" ? input
+      : input instanceof URL ? input.href
+      : (input as Request).url;
+    if (typeof url === "string" && url.startsWith("/api/")) {
+      return _localAPIHandler(url, init).catch(() =>
+        new Response(JSON.stringify({ error: "local api error" }), { status: 500, headers: { "Content-Type": "application/json" } })
+      );
+    }
+    return _origFetch(input, init);
+  };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /* ═══════════════════════════════════════════════════════
    UMBRA v4 — NOCTIS UNIVERSITY SOCIAL NETWORK
    University Portal · Auction Documents · Bid Records
@@ -6386,16 +6618,11 @@ export default function Umbra() {
                       e.target.value = "";
                       setImgUploading(true);
                       try {
-                        const urlRes = await fetch("/api/storage/uploads/request-url", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
-                        });
-                        const { uploadURL, publicUrl } = await urlRes.json();
-                        await fetch(uploadURL, {
-                          method: "PUT",
-                          headers: { "Content-Type": file.type },
-                          body: file,
+                        const publicUrl = await new Promise<string>((resolve, reject) => {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => resolve(ev.target?.result as string);
+                          reader.onerror = reject;
+                          reader.readAsDataURL(file);
                         });
                         setPImg(publicUrl);
                       } catch {
