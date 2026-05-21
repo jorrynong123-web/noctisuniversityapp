@@ -256,14 +256,24 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
   // ── POSTS ──────────────────────────────────────────────────────────────────
   if (seg[0] === "posts") {
     if (method === "GET" && !seg[1]) {
-      const { data, error } = await sb.from("posts").select("*").order("created_at", { ascending: false }).limit(100);
-      if (error) return _apiErr(error.message);
-      let posts = (data || []).map((p: any) => ({ id: p.id, userId: p.user_id, username: p.username, content: p.content, image: p.image, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes || 0, skulls: p.skulls || 0, flames: p.flames || 0, isNpc: p.is_npc, createdAt: p.created_at }));
+      // Fetch ALL real-user posts unconditionally first (no limit). Real users are rare,
+      // so this is bounded by signups. Then fetch newest NPC posts separately. This
+      // guarantees real-user posts ALWAYS appear in the feed and are never crowded out
+      // by the 100-post limit when NPC posts pile up.
+      const [realResp, npcResp] = await Promise.all([
+        sb.from("posts").select("*").eq("is_npc", false).order("created_at", { ascending: false }),
+        sb.from("posts").select("*").eq("is_npc", true).order("created_at", { ascending: false }).limit(60),
+      ]);
+      if (realResp.error) return _apiErr(realResp.error.message);
+      const shape = (p: any) => ({ id: p.id, userId: p.user_id, username: p.username, content: p.content, image: p.image, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes || 0, skulls: p.skulls || 0, flames: p.flames || 0, isNpc: p.is_npc, createdAt: p.created_at });
+      const realPosts = (realResp.data || []).map(shape);
+      const npcPosts = (npcResp.data || []).map(shape);
+      let posts = [...realPosts, ...npcPosts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const creds = getStoredCreds();
-      // Generate fresh NPC posts if: feed is sparse OR no NPC post in the last 24 hours
-      const oneDayAgo = Date.now() - 86400000;
-      const recentNpcCount = posts.filter((p: any) => p.isNpc && new Date(p.createdAt).getTime() > oneDayAgo).length;
-      if (posts.length < 8 || recentNpcCount < 2) {
+      // Generate fresh NPC posts ONLY when the feed is genuinely empty.
+      // Previous logic triggered on every refresh when recentNpcCount < 2, which
+      // pushed user posts out of the limited fetch window. Now: just keep a baseline.
+      if (npcPosts.length < 6) {
         const aiPosts = await _generateNPCPosts(creds ?? undefined);
         for (const p of aiPosts) {
           try { await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }); } catch {}
@@ -2669,47 +2679,63 @@ export default function Umbra() {
       // 4. Fetch real posts from API and merge into feed + localStorage
       try {
         const pRes = await _postsFetchP;
-        if (pRes.ok) {
-          const { posts: apiPosts } = await pRes.json();
-          if (Array.isArray(apiPosts) && apiPosts.length > 0) {
-            const shaped = apiPosts.map((p: any) => ({
-              id: p.id,
-              uid: p.userId,
-              type: p.image ? "image" : "text",
-              content: p.content,
-              image: p.image || null,
-              ts: new Date(p.createdAt).toLocaleDateString("en-GB", { day:"numeric", month:"short", year:"numeric" }),
-              _createdAt: new Date(p.createdAt).getTime(),
-              r: { "❤️": p.likes || 0, "💀": p.skulls || 0, "🔥": p.flames || 0 },
-              c: (p.comments || []).map((c: any) => ({ id: c.id, uid: c.userId, un: c.username, t: c.text, parentId: c.parentId || null })),
-              apexOnly: false,
-              _un: p.username,
-              _pic: p.pic,
-              _cov: p.covenant,
-              _tier: p.tier,
-              _real: true,
-            }));
-            setPosts((prev) => {
-              const prevById = new Map(prev.map((p: any) => [p.id, p]));
-              const apiIds = new Set(shaped.map((p: any) => p.id));
-              // Rebuild using API order (newest first), merging in any local comment additions
-              const apiOrdered = shaped.map((s: any) => {
-                const local = prevById.get(s.id);
-                if (!local) return s;
-                const localCIds = new Set((local.c || []).map((c: any) => c.id));
-                const freshC = s.c.filter((c: any) => !localCIds.has(c.id));
-                return { ...s, r: s.r, c: [...(local.c || []), ...freshC], _pic: s._pic || local._pic };
-              });
-              // Local-only posts (NPC seeds, optimistic posts not yet in DB) go after real posts
-              const localOnly = prev.filter((p: any) => !apiIds.has(p.id));
-              const merged = [...apiOrdered, ...localOnly];
-              lastWriteRef.current = Date.now();
-              try { localStorage.setItem(RT_POSTS_KEY, JSON.stringify(merged)); } catch {}
-              return merged;
-            });
+        const apiPosts: any[] = pRes.ok ? ((await pRes.json()).posts || []) : [];
+        // Reclaim any of the user's own posts that the API forgot (Supabase insert
+        // failed, post is older than the NPC-post window, etc.) from the backup.
+        const reclaimed: any[] = [];
+        try {
+          const session = JSON.parse(localStorage.getItem("umbra_session") || "{}");
+          if (session?.userId) {
+            const key = `umbra_my_posts_${session.userId}`;
+            const backup: any[] = JSON.parse(localStorage.getItem(key) || "[]");
+            const apiIdSet = new Set(apiPosts.map((p: any) => p.id));
+            for (const b of backup) {
+              if (!apiIdSet.has(b.id)) reclaimed.push(b);
+            }
+            if (reclaimed.length) console.log(`[init] reclaimed ${reclaimed.length} user post(s) from backup`);
           }
+        } catch {}
+        const allApi = [...apiPosts, ...reclaimed].sort((a: any, b: any) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        if (allApi.length > 0) {
+          const shaped = allApi.map((p: any) => ({
+            id: p.id,
+            uid: p.userId,
+            type: p.image ? "image" : "text",
+            content: p.content,
+            image: p.image || null,
+            ts: new Date(p.createdAt).toLocaleDateString("en-GB", { day:"numeric", month:"short", year:"numeric" }),
+            _createdAt: new Date(p.createdAt).getTime(),
+            r: { "❤️": p.likes || 0, "💀": p.skulls || 0, "🔥": p.flames || 0 },
+            c: (p.comments || []).map((c: any) => ({ id: c.id, uid: c.userId, un: c.username, t: c.text, parentId: c.parentId || null })),
+            apexOnly: false,
+            _un: p.username,
+            _pic: p.pic,
+            _cov: p.covenant,
+            _tier: p.tier,
+            _real: true,
+          }));
+          setPosts((prev) => {
+            const prevById = new Map(prev.map((p: any) => [p.id, p]));
+            const apiIds = new Set(shaped.map((p: any) => p.id));
+            // Rebuild using API order (newest first), merging in any local comment additions
+            const apiOrdered = shaped.map((s: any) => {
+              const local = prevById.get(s.id);
+              if (!local) return s;
+              const localCIds = new Set((local.c || []).map((c: any) => c.id));
+              const freshC = s.c.filter((c: any) => !localCIds.has(c.id));
+              return { ...s, r: s.r, c: [...(local.c || []), ...freshC], _pic: s._pic || local._pic };
+            });
+            // Local-only posts (NPC seeds, optimistic posts not yet in DB) go after real posts
+            const localOnly = prev.filter((p: any) => !apiIds.has(p.id));
+            const merged = [...apiOrdered, ...localOnly];
+            lastWriteRef.current = Date.now();
+            try { localStorage.setItem(RT_POSTS_KEY, JSON.stringify(merged)); } catch {}
+            return merged;
+          });
         }
-      } catch {}
+      } catch (err) { console.error("[init posts fetch]", err); }
       // 4b. Fetch live bids from API
       try {
         const bRes = await fetch("/api/bids", { cache: "no-store" });
@@ -2727,8 +2753,20 @@ export default function Umbra() {
       try {
         const pRes = await fetch("/api/posts", { cache: "no-store" });
         if (!pRes.ok) return;
-        const { posts: apiPosts } = await pRes.json();
-        if (!Array.isArray(apiPosts) || apiPosts.length === 0) return;
+        const { posts: apiPostsRaw } = await pRes.json();
+        if (!Array.isArray(apiPostsRaw)) return;
+        // Reclaim user-post backup on every poll too
+        let apiPosts = apiPostsRaw;
+        try {
+          const session = JSON.parse(localStorage.getItem("umbra_session") || "{}");
+          if (session?.userId) {
+            const backup: any[] = JSON.parse(localStorage.getItem(`umbra_my_posts_${session.userId}`) || "[]");
+            const apiIdSet = new Set(apiPostsRaw.map((p: any) => p.id));
+            const reclaimed = backup.filter((b: any) => !apiIdSet.has(b.id));
+            if (reclaimed.length) apiPosts = [...apiPostsRaw, ...reclaimed].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          }
+        } catch {}
+        if (apiPosts.length === 0) return;
         let deletedCommentIds: string[] = [];
         try { deletedCommentIds = JSON.parse(localStorage.getItem("umbra_deleted_comments") || "[]"); } catch {}
         const shaped = apiPosts.map((p: any) => ({
@@ -5050,6 +5088,32 @@ export default function Umbra() {
     const autoLikes = isKet ? 35 + Math.floor(Math.random() * 50) : 2 + Math.floor(Math.random() * 12);
     const autoSkulls = Math.floor(Math.random() * 8);
     const autoFlames = Math.floor(Math.random() * 10);
+    // Bulletproof backup: stash a copy of every post the user creates into a
+    // user-scoped localStorage key. This is the last line of defence — even if
+    // the Supabase insert fails silently and the main posts cache is cleared,
+    // these posts will be re-merged into the feed on the next refresh.
+    const backupPost = {
+      id: postId,
+      userId: uid,
+      username: user.un,
+      content: pTxt.trim(),
+      image: pImg.trim() || null,
+      pic: user.pic || "🌑",
+      covenant: user.cov || "silk",
+      tier: user.tier || "commoner",
+      likes: autoLikes,
+      skulls: autoSkulls,
+      flames: autoFlames,
+      isNpc: false,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      const key = `umbra_my_posts_${uid}`;
+      const existing = JSON.parse(localStorage.getItem(key) || "[]");
+      existing.push(backupPost);
+      // Cap at 500 of the user's own posts so localStorage doesn't grow forever.
+      localStorage.setItem(key, JSON.stringify(existing.slice(-500)));
+    } catch {}
     fetch("/api/posts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -5067,7 +5131,7 @@ export default function Umbra() {
         flames: autoFlames,
         autoComments: autoC.map((c) => ({ id: c.id, userId: "auto", username: c.un, text: c.t })),
       }),
-    }).catch(() => {});
+    }).catch((err) => { console.warn("[doPost] Supabase insert failed (backup saved):", err); });
     const np = {
       id: postId,
       uid,
