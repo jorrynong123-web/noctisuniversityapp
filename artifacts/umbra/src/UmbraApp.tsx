@@ -5606,8 +5606,12 @@ export default function Umbra() {
   }, [uid, user]); // stable deps only — trentRel read via ref inside sendProactive
 
   const sendDm = useCallback(async () => {
-    if (!dmTxt.trim() || !dmConvId || !uid || !user) return;
+    if (!dmTxt.trim() || !dmConvId || !uid || !user || dmSending) return;
     setDmSending(true);
+    // Safety: even if everything below hangs or throws, the button can never
+    // stay locked for more than 8 seconds. The actual reply path keeps running
+    // in the background but the user can send their next message immediately.
+    const safetyReset = setTimeout(() => setDmSending(false), 8000);
     const convUser = ACCTS[dmConvId];
     // Prefer known display name; fall back to name stored in existing messages
     const convName = convUser?.un
@@ -5617,11 +5621,28 @@ export default function Umbra() {
     const userMsg = dmTxt.trim();
     const capturedConvId = dmConvId; // freeze for async closures
     const payload = { fromId: uid, fromUsername: user.un, fromPic: user.pic || "🌑", toId: capturedConvId, toUsername: convName, text: userMsg };
+    // Optimistic local insert so the message shows IMMEDIATELY in the chat,
+    // regardless of how slow / broken the server is.
+    const optimisticMsg = {
+      id: `local_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
+      fromId: uid, fromUsername: user.un, fromPic: user.pic || "🌑",
+      toId: capturedConvId, toUsername: convName, text: userMsg,
+      createdAt: new Date().toISOString(),
+      _optimistic: true,
+    };
+    setDmMessages((p) => [...p, optimisticMsg]);
+    setDmTxt("");
     try {
       const r = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const { message } = await r.json();
-      if (message) setDmMessages((p) => [...p, message]);
-      setDmTxt("");
+      if (message) {
+        // Replace the optimistic message with the server-saved one
+        setDmMessages((p) => {
+          const filtered = p.filter((m: any) => m.id !== optimisticMsg.id);
+          const ids = new Set(filtered.map((x: any) => x.id));
+          return ids.has(message.id) ? filtered : [...filtered, message];
+        });
+      }
 
       if (convUser && !convUser._real && (convUser.autoReply || convUser.personality)) {
         if (capturedConvId === "trent_morrison") addTrentPoints(uid, 1);
@@ -5692,9 +5713,14 @@ export default function Umbra() {
           })
           .finally(() => setDmTyping(false));
       }
-    } catch {}
-    setDmSending(false);
-  }, [dmTxt, dmConvId, uid, user, dmMessages, addTrentPoints, getTrentLevel, trentRel, trentMemory]);
+    } catch (err) {
+      console.warn("[sendDm] message POST failed:", err);
+    } finally {
+      // GUARANTEED — button never stuck. Also clear the safety timer.
+      clearTimeout(safetyReset);
+      setDmSending(false);
+    }
+  }, [dmTxt, dmConvId, uid, user, dmSending, dmMessages, addTrentPoints, addCyrusPoints, getTrentLevel, getCyrusLevel, trentRel, cyrusRel, trentMemory]);
 
   // Top-level professor DM send — used from the DM tab when dmConvId is a professor
   const sendProfTabDM = useCallback(async () => {
