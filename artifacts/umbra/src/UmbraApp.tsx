@@ -2163,6 +2163,18 @@ export default function Umbra() {
     if (t === "ascendant") return 100000;
     return 50000; // merit / commoner / pet / anything else
   };
+  // Safety net: if regSubmitting somehow stays true for > 10s (a hung promise,
+  // a runaway state, anything), force-reset it so the button isn't stuck. The
+  // user can click again and try.
+  useEffect(() => {
+    if (!regSubmitting) return;
+    const t = setTimeout(() => {
+      console.warn("[safety] regSubmitting stuck >10s, force-resetting");
+      setRegSubmitting(false);
+    }, 10000);
+    return () => clearTimeout(t);
+  }, [regSubmitting]);
+
   // Background drain for any "pending signups" — accounts that were created
   // locally during a Supabase outage / rate-limit. Retries the real signup
   // every 60s so they end up on the server once the network clears.
@@ -4863,9 +4875,10 @@ export default function Umbra() {
       return;
     }
     setRegSubmitting(true);
+
+    // Derived values (computed once, used by both server + local paths)
     const cov = qRes || "shadows";
     const cv = COV[cov];
-    // Tier is based on tier quiz score (max 45). apexScore stores the total from ansTier.
     let tier = "merit";
     if (apexScore >= 30) tier = "apex";
     else if (apexScore >= 15) tier = "ascendant";
@@ -4873,131 +4886,120 @@ export default function Umbra() {
     const wealth = tier === "apex" ? "Old Money" : tier === "ascendant" ? "New Money" : "Scholarship";
     const displayBio = newBio.trim() || `${cv.name} | ${tier.charAt(0).toUpperCase() + tier.slice(1)}`;
     const chosenPic = newPicData.trim() || cv.emoji;
-    // Call real API to create account
+    const cleanUN = newUN.trim().toLowerCase().replace(/\s+/g, "_");
+    const profileData = {
+      covenant: cov, tier, pic: chosenPic, bio: displayBio,
+      major: newMajor || "Undeclared", year: "Freshman", wealth,
+      gender: newGender || "prefer_not", pronouns: newPronouns || "",
+      quote: newQuote.trim(), academicFocus, personality: personalityTraits,
+      canSeeAuction: tier === "apex" || tier === "faculty",
+      canSeeRelief: tier === "apex" || tier === "faculty",
+    };
+
+    // Try Supabase signup with a hard 6s race. If it doesn't win, we proceed
+    // with a local account so the user is never blocked from entering the app.
+    let serverResult: { user: any; token: string } | null = null;
+    let usernameTakenSuggestion: string | null = null;
+    try {
+      const signupP = fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: cleanUN, password: newPW.trim(), profile: profileData }),
+      }).then(async (res) => ({ res, data: await res.json().catch(() => ({})) }));
+      const winner = await Promise.race([
+        signupP,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+      ]);
+      if (winner) {
+        const { res, data } = winner as any;
+        if (res.ok && data.user?.id) {
+          serverResult = data;
+        } else if (res.status === 409 && data.suggestion) {
+          usernameTakenSuggestion = data.suggestion;
+        } else {
+          console.warn("[finishReg] backend non-OK, falling back to local:", res.status, data?.error);
+        }
+      } else {
+        console.warn("[finishReg] backend timed out (6s), falling back to local account");
+      }
+    } catch (err: any) {
+      console.warn("[finishReg] backend threw, falling back to local:", err?.message || err);
+    }
+
+    // If username actually collided, stop and prompt — this is the ONLY hard stop.
+    if (usernameTakenSuggestion) {
+      setRegError(`Username "${cleanUN}" is already taken. Try: ${usernameTakenSuggestion}`);
+      setNewUN(usernameTakenSuggestion);
+      setRegSubmitting(false);
+      return;
+    }
+
+    // Build the account (server-backed OR local-only)
     let finalId: string;
     try {
-      const cleanUN = newUN.trim().toLowerCase().replace(/\s+/g, "_");
-      const profileData = {
-        covenant: cov, tier,
-        pic: chosenPic,
-        bio: displayBio,
-        major: newMajor || "Undeclared",
-        year: "Freshman",
-        wealth,
-        gender: newGender || "prefer_not",
-        pronouns: newPronouns || "",
-        quote: newQuote.trim(),
-        academicFocus,
-        personality: personalityTraits,
-        canSeeAuction: tier === "apex" || tier === "faculty",
-        canSeeRelief: tier === "apex" || tier === "faculty",
-      };
-      // 8-second timeout — short enough that users don't feel stuck. If Supabase
-      // is slow/paused/rate-limiting, we fall through to the offline-account
-      // fallback in the catch block. A background retry below will sync the
-      // account to Supabase when the network recovers.
-      const signupCtrl = new AbortController();
-      const signupTimeout = setTimeout(() => signupCtrl.abort(), 8000);
-      let res: Response;
-      try {
-        res = await fetch("/api/auth/signup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: cleanUN, password: newPW.trim(), profile: profileData }),
-          signal: signupCtrl.signal,
-        });
-      } finally {
-        clearTimeout(signupTimeout);
+      if (serverResult) {
+        setJWT(serverResult.token);
+        const acct: any = buildRealUser({ ...serverResult.user, covenant: cov, tier, pic: chosenPic, bio: displayBio });
+        acct.major = newMajor || "Undeclared";
+        acct.year = "Freshman";
+        acct.wealth = wealth;
+        acct.gender = newGender || "prefer_not";
+        acct.quote = newQuote.trim();
+        acct.academicFocus = academicFocus;
+        acct.personality = personalityTraits;
+        acct.canSeeAuction = tier === "apex" || tier === "faculty";
+        acct.canSeeRelief = tier === "apex" || tier === "faculty";
+        acct.un = newUN.trim();
+        acct.name = newUN.trim();
+        acct.handle = `@${cleanUN}`;
+        saveRealUser(acct);
+        finalId = acct.id;
+      } else {
+        // Local-only account
+        const gid = `custom_${cleanUN}_${Date.now()}`;
+        const newAcct: any = {
+          id: gid, un: newUN.trim(), handle: `@${cleanUN}`,
+          pw: newPW.trim(), cov, tier, pic: chosenPic, bio: displayBio,
+          followers: 800 + Math.floor(Math.random() * 400), following: 20 + Math.floor(Math.random() * 80),
+          gaze: 0, wealth, rep: "New Arrival", defTheme: "dark", canPost: true, canTheme: true,
+          badge: `${cv.emoji} ${tier.toUpperCase()}`, bColor: cv.color, cover: cv.emoji,
+          major: newMajor || "Undeclared", year: "Freshman", greek: "None",
+          gender: newGender || "prefer_not", quote: newQuote.trim(),
+          academicFocus, personality: personalityTraits,
+          canSeeAuction: tier === "apex", canSeeRelief: tier === "apex",
+          _real: true,
+        };
+        ACCTS[gid] = newAcct;
+        try { const s = JSON.parse(localStorage.getItem("umbra_custom_accts") || "{}"); s[gid] = newAcct; localStorage.setItem("umbra_custom_accts", JSON.stringify(s)); } catch {}
+        // Queue background retry to sync to Supabase later
+        try {
+          const pendingKey = "umbra_pending_signups";
+          const pending = JSON.parse(localStorage.getItem(pendingKey) || "[]");
+          pending.push({ localId: gid, username: cleanUN, password: newPW.trim(), profile: profileData, attempts: 0, createdAt: Date.now() });
+          localStorage.setItem(pendingKey, JSON.stringify(pending));
+        } catch {}
+        finalId = gid;
       }
-      const data = await res.json();
-      if (!res.ok) {
-        // Username collision is the only "hard stop" — for that, ask the user to
-        // pick another name. For ALL other backend errors we let signup fall
-        // through to the offline-account path so the user is never blocked.
-        if (res.status === 409 && data.suggestion) {
-          setRegError(`Username "${cleanUN}" is already taken. Try: ${data.suggestion}`);
-          setNewUN(data.suggestion);
-          setRegSubmitting(false);
-          return;
-        }
-        // Throw so the catch block below handles it identically to a network failure.
-        throw new Error(data.error || `Signup HTTP ${res.status}`);
-      }
-      setJWT(data.token);
-      const acct = buildRealUser({ ...data.user, covenant: cov, tier, pic: chosenPic, bio: displayBio });
-      (acct as any).major = newMajor || "Undeclared";
-      (acct as any).year = "Freshman";
-      (acct as any).wealth = wealth;
-      (acct as any).gender = newGender || "prefer_not";
-      (acct as any).quote = newQuote.trim();
-      (acct as any).academicFocus = academicFocus;
-      (acct as any).personality = personalityTraits;
-      (acct as any).canSeeAuction = tier === "apex" || tier === "faculty";
-      (acct as any).canSeeRelief = tier === "apex" || tier === "faculty";
-      (acct as any).un = newUN.trim();
-      (acct as any).name = newUN.trim();
-      (acct as any).handle = `@${cleanUN}`;
-      saveRealUser(acct);
-      setAcctVer(v => v + 1);
-      // Set starting balance
-      try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[acct.id] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
-      setWalletBalance(startBal);
-      finalId = acct.id;
-    } catch (err: any) {
-      // Server unreachable / slow / rate-limited / Supabase paused — DO NOT block
-      // the user. Create a local account immediately so they enter the app,
-      // and queue a background retry to sync them to Supabase when possible.
-      console.warn("[finishReg] backend failed, falling back to local account:", err?.message || err);
-      const cleanUN = newUN.trim().toLowerCase().replace(/\s+/g, "_");
-      const gid = `custom_${cleanUN}_${Date.now()}`;
-      const newAcct: any = {
-        id: gid, un: newUN.trim(), handle: `@${cleanUN}`,
-        pw: newPW.trim(), cov, tier, pic: chosenPic,
-        bio: displayBio,
-        followers: 800 + Math.floor(Math.random() * 400), following: 20 + Math.floor(Math.random() * 80), gaze: 0, wealth, rep: "New Arrival",
-        defTheme: "dark", canPost: true, canTheme: true,
-        badge: `${cv.emoji} ${tier.toUpperCase()}`, bColor: cv.color, cover: cv.emoji,
-        major: newMajor || "Undeclared", year: "Freshman", greek: "None",
-        gender: newGender || "prefer_not", quote: newQuote.trim(),
-        academicFocus, personality: personalityTraits,
-        canSeeAuction: tier === "apex", canSeeRelief: tier === "apex",
-      };
-      ACCTS[gid] = newAcct;
-      try { const s = JSON.parse(localStorage.getItem("umbra_custom_accts") || "{}"); s[gid] = newAcct; localStorage.setItem("umbra_custom_accts", JSON.stringify(s)); } catch {}
-      try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[gid] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
+      try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[finalId] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
       setWalletBalance(startBal);
       setAcctVer(v => v + 1);
-      finalId = gid;
-      // Queue a background sync — retry every 60s for up to 30min so the account
-      // ends up on Supabase when the rate limit/outage clears. No user prompts.
-      try {
-        const pendingKey = "umbra_pending_signups";
-        const pending = JSON.parse(localStorage.getItem(pendingKey) || "[]");
-        pending.push({
-          localId: gid, username: cleanUN, password: newPW.trim(),
-          profile: {
-            covenant: cov, tier, pic: chosenPic, bio: displayBio,
-            major: newMajor || "Undeclared", year: "Freshman", wealth,
-            gender: newGender || "prefer_not", pronouns: newPronouns || "",
-            quote: newQuote.trim(), academicFocus, personality: personalityTraits,
-            canSeeAuction: tier === "apex" || tier === "faculty",
-            canSeeRelief: tier === "apex" || tier === "faculty",
-          },
-          attempts: 0, createdAt: Date.now(),
-        });
-        localStorage.setItem(pendingKey, JSON.stringify(pending));
-      } catch {}
-      // No scary error message — silently enter the app
+
+      // ENTER THE APP — guaranteed to run as long as account creation didn't throw
+      setUid(finalId);
+      setThemeId("dark");
+      saveSession(finalId, "dark");
+      setShowWelcome(true);
+      setPendingTags([]);
       setRegError("");
+      setScreen("tags");
+    } catch (buildErr: any) {
+      console.error("[finishReg] account build failed:", buildErr?.message || buildErr);
+      setRegError("Something went wrong creating your account. Try again.");
+    } finally {
+      // GUARANTEED — button never stays disabled, no matter what happened above
+      setRegSubmitting(false);
     }
-    setRegSubmitting(false);
-    setUid(finalId);
-    setThemeId("dark");
-    saveSession(finalId, "dark");
-    setShowWelcome(true);
-    setPendingTags([]);
-    setScreen("tags");
-  }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, academicFocus, personalityTraits, regSubmitting, toast, saveSession]);
+  }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, newPronouns, newPicData, academicFocus, personalityTraits, regSubmitting, saveSession]);
 
   // ── LOGIN ──
   const doLogin = useCallback(
