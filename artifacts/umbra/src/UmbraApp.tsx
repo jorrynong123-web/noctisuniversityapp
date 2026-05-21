@@ -775,9 +775,13 @@ if (typeof window !== "undefined" && !(window as any).__umbraShim) {
   (window as any).fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
     if (typeof url === "string" && url.startsWith("/api/")) {
-      return _localAPIHandler(url, init ?? {}).catch(() =>
-        new Response(JSON.stringify({ error: "shim error" }), { status: 500, headers: { "Content-Type": "application/json" } })
-      );
+      return _localAPIHandler(url, init ?? {}).catch((err) => {
+        // Expose the real exception message so users + devs can see what failed,
+        // instead of the useless "shim error" placeholder.
+        const msg = err instanceof Error ? err.message : String(err ?? "unknown");
+        console.error("[shim] handler threw on", url, "→", err);
+        return new Response(JSON.stringify({ error: `Network/handler error: ${msg}` }), { status: 500, headers: { "Content-Type": "application/json" } });
+      });
     }
     return _origFetch(input, init);
   };
