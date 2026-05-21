@@ -20,7 +20,7 @@ import { LOTS, INIT_CONFS, PARTIES, TWISTED, LIVES, QNA_INIT, ANNOUNCEMENTS, REL
 import { SHOP_ITEMS, DAILY_DEALS, FLASH_SALES, PORTAL_LISTINGS, TRENT_REL_LEVELS, TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5, TRENT_GIFT_REPLIES, TRENT_PIC_REPLIES } from "./data/shopAndTrent";
 import { AUTO_C, AUTO_UN, NPC_COMMENTERS, UNSPLASH_PLACEHOLDERS } from "./data/feedData";
 import { supabase } from "./lib/supabase";
-import { callLLM, getStoredCreds, buildNPCPrompt, buildProfPrompt, buildNPCPostPrompt } from "./lib/ai";
+import { callLLM, getStoredCreds, buildNPCPrompt, buildProfPrompt, buildNPCPostPrompt, testLLMConnection } from "./lib/ai";
 
 // ─── SUPABASE + AI SHIM ──────────────────────────────────────────────────────
 // Intercepts all /api/* fetch calls and handles them with localStorage so the
@@ -1958,6 +1958,9 @@ export default function Umbra() {
   const [aiApiBase, setAiApiBase] = useState(() => getAiCreds().apiBase || "");
   const [aiApiKey, setAiApiKey] = useState(() => getAiCreds().apiKey || "");
   const [aiModel, setAiModel] = useState(() => getAiCreds().model || "");
+  // Test-connection state for Settings UI
+  const [aiTesting, setAiTesting] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [showDmAiPanel, setShowDmAiPanel] = useState(false);
   const hasUserAiKey = Boolean(aiApiBase.trim() && aiApiKey.trim() && aiModel.trim());
   const [editSaving, setEditSaving] = useState(false);
@@ -18036,15 +18039,21 @@ export default function Umbra() {
           <p style={{ fontSize: 10, color: T.muted, marginBottom: 6, letterSpacing: "0.08em" }}>QUICK PRESETS</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
             {[
-              { name: "Groq (Free)", base: "https://api.groq.com/openai", model: "llama-3.1-8b-instant", hint: "Fast & free tier available" },
+              { name: "Groq (Free)", base: "https://api.groq.com/openai/v1", model: "llama-3.1-8b-instant", hint: "Fast & free tier" },
               { name: "OpenRouter", base: "https://openrouter.ai/api/v1", model: "meta-llama/llama-3.1-8b-instruct:free", hint: "100+ models, free tier" },
+              { name: "NanoGPT", base: "https://nano-gpt.com/api/v1", model: "gpt-4o-mini", hint: "GPT/Claude/Gemini pay-per-use" },
               { name: "Chutes AI", base: "https://llm.chutes.ai/v1", model: "deepseek-ai/DeepSeek-V3-0324", hint: "DeepSeek & more" },
-              { name: "NanoGPT", base: "https://nano-gpt.com/api/v1", model: "gpt-4o-mini", hint: "Pay-per-use credits" },
-              { name: "OpenAI", base: "https://api.openai.com/v1", model: "gpt-4o-mini", hint: "Official OpenAI API" },
-              { name: "Custom", base: "", model: "", hint: "Enter your own endpoint" },
+              { name: "DeepSeek", base: "https://api.deepseek.com/v1", model: "deepseek-chat", hint: "Cheap & fast" },
+              { name: "Together AI", base: "https://api.together.xyz/v1", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", hint: "Many open models" },
+              { name: "Mistral", base: "https://api.mistral.ai/v1", model: "mistral-small-latest", hint: "Free tier" },
+              { name: "Anthropic", base: "https://api.anthropic.com/v1", model: "claude-3-5-haiku-latest", hint: "Claude (native API)" },
+              { name: "Gemini", base: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-1.5-flash", hint: "Google (native API)" },
+              { name: "OpenAI", base: "https://api.openai.com/v1", model: "gpt-4o-mini", hint: "Official OpenAI" },
+              { name: "Ollama (local)", base: "http://localhost:11434/v1", model: "llama3.1", hint: "Self-hosted, run locally" },
+              { name: "Custom", base: "", model: "", hint: "Any OpenAI-compatible endpoint" },
             ].map(p => (
               <button key={p.name} type="button" className="b" onClick={() => {
-                if (p.base) { setAiApiBase(p.base); setAiModel(p.model); }
+                if (p.base) { setAiApiBase(p.base); setAiModel(p.model); setAiTestResult(null); }
               }} style={{ ...card, padding: "8px 10px", textAlign: "left", fontSize: 11, color: aiApiBase === p.base && p.base ? T.primary : T.text, borderColor: aiApiBase === p.base && p.base ? T.primary : T.border }}>
                 <div style={{ fontWeight: 700 }}>{p.name}</div>
                 <div style={{ fontSize: 9, color: T.muted, marginTop: 2 }}>{p.hint}</div>
@@ -18053,23 +18062,51 @@ export default function Umbra() {
           </div>
           {[
             { label: "API ENDPOINT", val: aiApiBase, set: setAiApiBase, placeholder: "https://api.groq.com/openai/v1", type: "url" as const },
-            { label: "API KEY", val: aiApiKey, set: setAiApiKey, placeholder: "gsk_... or sk-...", type: "password" as const },
+            { label: "API KEY", val: aiApiKey, set: setAiApiKey, placeholder: "gsk_... / sk-... / sk-ant-...", type: "password" as const },
             { label: "MODEL", val: aiModel, set: setAiModel, placeholder: "llama-3.1-8b-instant", type: "text" as const },
           ].map(({ label, val, set, placeholder, type }) => (
             <div key={label} style={{ marginBottom: 8 }}>
               <p style={{ fontSize: 10, color: T.muted, marginBottom: 3, letterSpacing: "0.08em" }}>{label}</p>
-              <input type={type} value={val} onChange={e => set(e.target.value)} placeholder={placeholder}
+              <input type={type} value={val} onChange={e => { set(e.target.value); setAiTestResult(null); }} placeholder={placeholder}
                 style={{ ...inp, fontSize: 12, fontFamily: type === "password" ? "monospace" : undefined }} />
             </div>
           ))}
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          {/* Test result display */}
+          {aiTestResult && (
+            <div style={{
+              marginTop: 8, padding: "8px 10px", borderRadius: 6, fontSize: 11, lineHeight: 1.5,
+              background: aiTestResult.ok ? "rgba(60,140,60,0.15)" : "rgba(180,40,40,0.15)",
+              border: `1px solid ${aiTestResult.ok ? "#3c8c3c" : "#7a2020"}`,
+              color: aiTestResult.ok ? "#7ac47a" : "#e87878",
+              fontFamily: "monospace", wordBreak: "break-word"
+            }}>
+              {aiTestResult.ok ? "✅ " : "❌ "}{aiTestResult.msg}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" as const }}>
             <button type="button" className="b" onClick={() => {
               saveAiCreds({ apiBase: aiApiBase.trim(), apiKey: aiApiKey.trim(), model: aiModel.trim() });
               toast("✅ AI key saved — NPCs will now use your engine");
-            }} style={{ ...btn(true), flex: 1, padding: "10px", fontSize: 11 }}>SAVE AI KEY</button>
+            }} style={{ ...btn(true), flex: "1 1 120px", padding: "10px", fontSize: 11 }}>SAVE AI KEY</button>
+            <button type="button" className="b" disabled={aiTesting || !aiApiBase.trim() || !aiApiKey.trim() || !aiModel.trim()} onClick={async () => {
+              setAiTesting(true);
+              setAiTestResult(null);
+              try {
+                const result = await testLLMConnection({ apiBase: aiApiBase.trim(), apiKey: aiApiKey.trim(), model: aiModel.trim() });
+                if (result.ok) {
+                  setAiTestResult({ ok: true, msg: `Connected (${result.provider}). Reply: "${result.reply.slice(0, 80)}"` });
+                } else {
+                  setAiTestResult({ ok: false, msg: `${result.provider}: ${result.error}` });
+                }
+              } catch (err: any) {
+                setAiTestResult({ ok: false, msg: err?.message || String(err) });
+              } finally {
+                setAiTesting(false);
+              }
+            }} style={{ ...btn(false), flex: "1 1 120px", padding: "10px", fontSize: 11, opacity: aiTesting ? 0.6 : 1, cursor: aiTesting ? "wait" : "pointer" }}>{aiTesting ? "TESTING…" : "🧪 TEST CONNECTION"}</button>
             {hasUserAiKey && (
               <button type="button" className="b" onClick={() => {
-                setAiApiBase(""); setAiApiKey(""); setAiModel("");
+                setAiApiBase(""); setAiApiKey(""); setAiModel(""); setAiTestResult(null);
                 saveAiCreds({ apiBase: "", apiKey: "", model: "" });
                 toast("Switched to free AI");
               }} style={{ ...btn(false), padding: "10px 14px", fontSize: 11, borderColor: T.muted, color: T.muted }}>CLEAR</button>

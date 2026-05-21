@@ -1,5 +1,6 @@
-// Direct browser → any OpenAI-compatible LLM
-// Credentials stored in localStorage under "umbra_ai_creds"
+// Direct browser → any LLM provider (OpenAI-compatible, Anthropic native, or Google Gemini native).
+// Provider is auto-detected from the API endpoint URL.
+// Credentials stored in localStorage under "umbra_ai_creds".
 
 export interface AICreds {
   apiBase: string;
@@ -18,46 +19,76 @@ export function getStoredCreds(): AICreds | null {
   }
 }
 
-// Normalise the user's "API base" so common mistakes still work.
-// Accepts any of:
-//   https://api.groq.com/openai           (Groq, no /v1)
-//   https://api.groq.com/openai/v1        (Groq, with /v1 — correct)
-//   https://api.openai.com                (OpenAI, no /v1)
-//   https://api.openai.com/v1             (OpenAI, with /v1 — correct)
-//   https://api.openai.com/v1/chat/completions  (full path — strip the tail)
-// Returns the absolute endpoint URL ending in /chat/completions.
-function buildChatEndpoint(rawBase: string): string {
+// ─── Provider detection ─────────────────────────────────────────────────────
+type ProviderKind = "anthropic" | "gemini" | "openai-compat";
+
+function detectProvider(rawBase: string): ProviderKind {
+  const b = rawBase.toLowerCase();
+  if (b.includes("anthropic.com") || b.includes("/anthropic")) return "anthropic";
+  if (b.includes("generativelanguage.googleapis.com") || b.includes("/gemini")) return "gemini";
+  return "openai-compat";
+}
+
+// ─── URL normalisation (covers common typos) ────────────────────────────────
+function normaliseBase(rawBase: string): string {
   let base = rawBase.trim().replace(/\/+$/, "");
-  // If user pasted the full endpoint, strip the tail
-  base = base.replace(/\/chat\/completions$/, "");
-  // Auto-append /v1 if there's no version segment (covers OpenAI, Groq, Together, OpenRouter…)
-  const hasVersion = /\/v\d+$/.test(base) || /\/openai$/.test(base) === false && /\/api\/v\d+$/.test(base);
-  if (!/\/v\d+$/.test(base) && !/\/openai\/v\d+$/.test(base)) {
-    // For Groq specifically: append /v1 after /openai if missing
-    if (/\/openai$/.test(base)) base = base + "/v1";
-    // For everything else without a version: append /v1
-    else if (!/\/v\d+/.test(base)) base = base + "/v1";
+  // Strip /chat/completions, /messages, /generateContent if user pasted the full endpoint
+  base = base
+    .replace(/\/chat\/completions$/, "")
+    .replace(/\/messages$/, "")
+    .replace(/\/models\/[^/]+:generateContent$/, "")
+    .replace(/\/v1\/messages$/, "/v1");
+  return base;
+}
+
+function buildOpenAIEndpoint(rawBase: string): string {
+  let base = normaliseBase(rawBase);
+  // Auto-append /v1 if missing (handles users pasting "https://api.openai.com" without /v1)
+  if (!/\/v\d+(?:beta)?$/i.test(base)) {
+    if (/\/openai$/.test(base)) base = base + "/v1"; // Groq quirk: /openai/v1
+    else if (!/\/v\d+/i.test(base)) base = base + "/v1";
   }
-  void hasVersion;
   return base + "/chat/completions";
 }
 
-export async function callLLM(
+function buildAnthropicEndpoint(rawBase: string): string {
+  let base = normaliseBase(rawBase);
+  if (!/\/v\d+$/i.test(base)) base = base + "/v1";
+  return base + "/messages";
+}
+
+// ─── Friendly error wrapping (so users see what's actually broken) ──────────
+function wrapStatusError(status: number, body: string, endpoint: string): Error {
+  if (status === 401 || status === 403) {
+    return new Error(`Auth failed (${status}). Your API key is wrong or expired. Re-paste it in Settings.`);
+  }
+  if (status === 404) {
+    return new Error(`Endpoint not found (404). Tried: ${endpoint}. Your "API Endpoint" in Settings is wrong — it should typically end in /v1 (e.g. https://api.groq.com/openai/v1 or https://nano-gpt.com/api/v1).`);
+  }
+  if (status === 429) {
+    return new Error("Rate limited (429). Slow down or check your quota/balance with the provider.");
+  }
+  if (status === 402) {
+    return new Error("Payment required (402). Your account is out of credits — top up with your provider.");
+  }
+  if (status >= 400 && status < 500) {
+    return new Error(`Client error ${status}: ${body.slice(0, 200)} — likely a wrong model name. Check Settings.`);
+  }
+  return new Error(`Provider error ${status}: ${body.slice(0, 200)}`);
+}
+
+// ─── OpenAI-compatible call (Groq, NanoGPT, OpenRouter, OpenAI, Together, DeepSeek, Mistral, Ollama, etc.) ──
+async function callOpenAICompat(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-  creds?: AICreds | null,
+  c: AICreds,
   opts?: { maxTokens?: number; temperature?: number }
 ): Promise<string> {
-  const c = creds ?? getStoredCreds();
-  if (!c) throw new Error("no-api-key");
-  const endpoint = buildChatEndpoint(c.apiBase);
+  const endpoint = buildOpenAIEndpoint(c.apiBase);
   let res: Response;
   try {
     res = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${c.apiKey}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${c.apiKey}` },
       body: JSON.stringify({
         model: c.model,
         messages,
@@ -66,33 +97,149 @@ export async function callLLM(
       }),
     });
   } catch (netErr: any) {
-    console.error("[callLLM] network/CORS failure calling", endpoint, "→", netErr?.message || netErr);
-    throw new Error(`Network/CORS error contacting ${endpoint}. Check the API endpoint URL in Settings.`);
+    console.error("[callLLM/openai] network/CORS failure calling", endpoint, "→", netErr?.message || netErr);
+    throw new Error(`Network/CORS error contacting ${endpoint}. The provider may block browser requests, or the endpoint URL is wrong.`);
   }
   if (!res.ok) {
-    const err = await res.text().catch(() => "");
-    console.error("[callLLM]", res.status, "from", endpoint, "→", err.slice(0, 400));
-    if (res.status === 401 || res.status === 403) {
-      throw new Error("LLM auth failed (401/403). Your API key is wrong or expired. Re-paste it in Settings.");
-    }
-    if (res.status === 404) {
-      throw new Error(`LLM endpoint not found (404). Endpoint tried: ${endpoint}. Your "API Endpoint" in Settings is wrong — check that it ends in /v1 (e.g. https://api.groq.com/openai/v1).`);
-    }
-    if (res.status === 429) {
-      throw new Error("LLM rate limit (429). Slow down or check your usage quota.");
-    }
-    if (res.status >= 400 && res.status < 500) {
-      throw new Error(`LLM client error ${res.status}: ${err.slice(0, 200)} — likely a wrong model name or invalid request.`);
-    }
-    throw new Error(`LLM ${res.status}: ${err.slice(0, 200)}`);
+    const body = await res.text().catch(() => "");
+    console.error("[callLLM/openai]", res.status, "from", endpoint, "→", body.slice(0, 400));
+    throw wrapStatusError(res.status, body, endpoint);
   }
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content?.trim();
   if (!content) {
-    console.warn("[callLLM] empty content in response", data);
-    throw new Error("LLM returned an empty reply. Check the model name in Settings.");
+    console.warn("[callLLM/openai] empty content", data);
+    throw new Error("Provider returned an empty reply. Check the model name in Settings.");
   }
   return content;
+}
+
+// ─── Anthropic native call (messages API, x-api-key header, system param) ──
+async function callAnthropic(
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  c: AICreds,
+  opts?: { maxTokens?: number; temperature?: number }
+): Promise<string> {
+  const endpoint = buildAnthropicEndpoint(c.apiBase);
+  // Anthropic expects system as a separate top-level param, and only user/assistant in messages
+  const systemMsgs = messages.filter(m => m.role === "system").map(m => m.content).join("\n\n");
+  const convo = messages.filter(m => m.role !== "system").map(m => ({ role: m.role, content: m.content }));
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": c.apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: c.model,
+        max_tokens: opts?.maxTokens ?? 200,
+        temperature: opts?.temperature ?? 0.85,
+        system: systemMsgs || undefined,
+        messages: convo,
+      }),
+    });
+  } catch (netErr: any) {
+    console.error("[callLLM/anthropic] network/CORS failure", endpoint, "→", netErr?.message || netErr);
+    throw new Error(`Network/CORS error contacting ${endpoint}. Anthropic browser CORS requires the "anthropic-dangerous-direct-browser-access" header (already included) — if this still fails, try a proxy provider like OpenRouter instead.`);
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.error("[callLLM/anthropic]", res.status, "from", endpoint, "→", body.slice(0, 400));
+    throw wrapStatusError(res.status, body, endpoint);
+  }
+  const data = await res.json();
+  // Anthropic returns content as an array of blocks: [{ type: "text", text: "..." }]
+  const blocks = Array.isArray(data.content) ? data.content : [];
+  const content = blocks.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+  if (!content) {
+    console.warn("[callLLM/anthropic] empty content", data);
+    throw new Error("Anthropic returned an empty reply. Check the model name in Settings (e.g. claude-3-5-sonnet-latest).");
+  }
+  return content;
+}
+
+// ─── Google Gemini native call ──────────────────────────────────────────────
+async function callGemini(
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  c: AICreds,
+  opts?: { maxTokens?: number; temperature?: number }
+): Promise<string> {
+  // Gemini uses ?key=... query param and model in the URL
+  const base = normaliseBase(c.apiBase);
+  const versionMatch = /\/v\d+(?:beta)?$/i.test(base) ? "" : "/v1beta";
+  const endpoint = `${base}${versionMatch}/models/${c.model}:generateContent?key=${encodeURIComponent(c.apiKey)}`;
+  // Gemini's roles are "user" / "model" (no "system" — squash system into first user message)
+  const systemPrefix = messages.filter(m => m.role === "system").map(m => m.content).join("\n\n");
+  const convo = messages.filter(m => m.role !== "system");
+  const contents = convo.map((m, i) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: i === 0 && systemPrefix ? `${systemPrefix}\n\n${m.content}` : m.content }],
+  }));
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents,
+        generationConfig: {
+          maxOutputTokens: opts?.maxTokens ?? 200,
+          temperature: opts?.temperature ?? 0.85,
+        },
+      }),
+    });
+  } catch (netErr: any) {
+    console.error("[callLLM/gemini] network/CORS failure", endpoint, "→", netErr?.message || netErr);
+    throw new Error(`Network/CORS error contacting Gemini. Check the API endpoint and key in Settings.`);
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.error("[callLLM/gemini]", res.status, "from", endpoint, "→", body.slice(0, 400));
+    throw wrapStatusError(res.status, body, endpoint);
+  }
+  const data = await res.json();
+  const content = data.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join("").trim();
+  if (!content) {
+    console.warn("[callLLM/gemini] empty content", data);
+    throw new Error("Gemini returned an empty reply. Check the model name in Settings (e.g. gemini-1.5-flash).");
+  }
+  return content;
+}
+
+// ─── Main entry point: auto-detects provider and dispatches ─────────────────
+export async function callLLM(
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  creds?: AICreds | null,
+  opts?: { maxTokens?: number; temperature?: number }
+): Promise<string> {
+  const c = creds ?? getStoredCreds();
+  if (!c) throw new Error("no-api-key");
+  const provider = detectProvider(c.apiBase);
+  if (provider === "anthropic") return callAnthropic(messages, c, opts);
+  if (provider === "gemini") return callGemini(messages, c, opts);
+  return callOpenAICompat(messages, c, opts);
+}
+
+// ─── Test connection (used by the Settings "Test" button) ───────────────────
+export async function testLLMConnection(creds: AICreds): Promise<{ ok: true; reply: string; provider: string } | { ok: false; error: string; provider: string }> {
+  const provider = detectProvider(creds.apiBase);
+  try {
+    const reply = await callLLM(
+      [
+        { role: "system", content: "You are a test endpoint. Reply with exactly: PONG" },
+        { role: "user", content: "ping" },
+      ],
+      creds,
+      { maxTokens: 10, temperature: 0.1 }
+    );
+    return { ok: true, reply, provider };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || String(err), provider };
+  }
 }
 
 // ── System prompt builders ───────────────────────────────────────────────────
