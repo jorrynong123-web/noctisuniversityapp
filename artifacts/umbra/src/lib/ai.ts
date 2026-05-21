@@ -210,6 +210,29 @@ async function callGemini(
   return content;
 }
 
+// ─── Sanitiser: strip roleplay-narration artefacts ──────────────────────────
+// Some models still slip into "*adjusts collar* he says quietly" mode even
+// when the system prompt explicitly forbids it. This post-filter removes the
+// common patterns so the reply reads like a real text message:
+//   - Asterisk-wrapped action lines:  *shifts weight nervously*
+//   - Bracketed stage directions:     [shifts weight nervously]
+//   - Underscore-wrapped emphasis often used the same way:  _glances up_
+// Leaves quotation marks and normal punctuation untouched.
+export function sanitizeChatReply(raw: string): string {
+  if (!raw) return raw;
+  let s = raw;
+  // Remove *...* and [...] blocks (action/stage directions)
+  s = s.replace(/\*[^*\n]{1,200}\*/g, "");
+  s = s.replace(/\[[^\]\n]{1,200}\]/g, "");
+  // Remove _..._ blocks that span only words (avoid eating snake_case_variables)
+  s = s.replace(/(^|\s)_([^_\n]{1,200})_(\s|$|[.,!?;:])/g, "$1$3");
+  // Collapse extra whitespace, strip lonely punctuation that lost its target
+  s = s.replace(/\s{2,}/g, " ").replace(/\s+([.,!?;:])/g, "$1").trim();
+  // Strip wrapping straight quotes if the whole reply is quoted
+  if (/^".+"$/.test(s) || /^'.+'$/.test(s)) s = s.slice(1, -1).trim();
+  return s;
+}
+
 // ─── Main entry point: auto-detects provider and dispatches ─────────────────
 export async function callLLM(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
@@ -219,9 +242,11 @@ export async function callLLM(
   const c = creds ?? getStoredCreds();
   if (!c) throw new Error("no-api-key");
   const provider = detectProvider(c.apiBase);
-  if (provider === "anthropic") return callAnthropic(messages, c, opts);
-  if (provider === "gemini") return callGemini(messages, c, opts);
-  return callOpenAICompat(messages, c, opts);
+  let raw: string;
+  if (provider === "anthropic") raw = await callAnthropic(messages, c, opts);
+  else if (provider === "gemini") raw = await callGemini(messages, c, opts);
+  else raw = await callOpenAICompat(messages, c, opts);
+  return sanitizeChatReply(raw);
 }
 
 // ─── Test connection (used by the Settings "Test" button) ───────────────────
@@ -272,7 +297,17 @@ Personality: ${personality}
 Bio: ${bio}${family ? `\nFamily: ${family}` : ""}
 Covenant: ${cov.toUpperCase()} | Tier: ${tier.toUpperCase()} | Wealth: ${wealth}${traits ? `\nTraits: ${traits}` : ""}${relNote}${memNote}
 
-Rules: Stay fully in character. Max 2-3 sentences. Never mention being an AI. Match Noctis's dark, tense, elite atmosphere. Your tone must be authentic to your personality.`;
+FORMAT — VERY IMPORTANT: You are TEXTING ${context?.username || "this user"} on a chat app. This is a TEXT MESSAGE, not roleplay.
+- Output ONLY the words you would actually type and send. Nothing else.
+- ABSOLUTELY NO action lines, NO body language descriptions, NO "*I shift my weight*", NO "*runs a hand through hair*", NO "*looks away*", NO asterisks at all.
+- NO third-person narration. NO "she says" or "he replies". NO scene-setting.
+- NO emotive parentheticals like "(nervously)" or "(quietly)".
+- Just the chat text — like a real text message someone would send on their phone. Punctuation, lowercase if it fits your personality, ellipses, etc. are fine.
+- Max 2-3 sentences. Sometimes one. Sometimes a fragment. Texting cadence.
+- Stay fully in character. Never mention being an AI. Match Noctis's dark, tense, elite atmosphere. Tone must be authentic to your personality.
+
+GOOD example: "stop messaging me. ...you good though?"
+BAD example: "*Trent glances at his phone, jaw tight.* Stop messaging me. *He pauses.* ...You good though?"`;
 }
 
 export function buildProfPrompt(
@@ -324,7 +359,15 @@ Teaching style: ${prof.teaching}
 ${prof.appearance ? `Appearance: ${prof.appearance}` : ""}
 ${prof.bio || ""}${biasBlock}
 
-The student messaging you is ${context?.username || "a student"} (Covenant: ${studentCov || "unknown"}, Tier: ${studentTier || "unknown"}). Stay completely in character. Max 2-3 sentences. Never mention being an AI. You are at Noctis — every interaction carries weight.`;
+The student messaging you is ${context?.username || "a student"} (Covenant: ${studentCov || "unknown"}, Tier: ${studentTier || "unknown"}).
+
+FORMAT — VERY IMPORTANT: You are TEXTING the student through Noctis's faculty chat. This is a TEXT MESSAGE, not roleplay.
+- Output ONLY the words you would type and send. Nothing else.
+- ABSOLUTELY NO action lines, NO body language ("*adjusts spectacles*"), NO asterisks, NO third-person narration.
+- NO scene descriptions. NO "(coldly)" parentheticals.
+- Just the chat text. Max 2-3 sentences. Faculty tone — measured, controlled, intentional word choice.
+
+Stay completely in character. Never mention being an AI. You are at Noctis — every interaction carries weight.`;
 }
 
 export function buildNPCPostPrompt(npc: any): string {

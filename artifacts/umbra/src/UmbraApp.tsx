@@ -1239,10 +1239,41 @@ const PRONOUNS_MAP: Record<string, string> = {
 // ── NPC SENIORITY SCORES — used in leaderboard ───────────────────────────────
 // Deterministic hash so scores stay stable between renders
 /** Render a pic field as an <img> if it's a URL, or as an emoji span otherwise. */
+// Per-NPC emoji fallback used when their image URL fails to load (file not
+// uploaded yet, 404, etc.). Lets the UI show SOMETHING instead of a broken
+// image icon. Maps the image path back to a sensible character emoji.
+const PIC_EMOJI_FALLBACK: Record<string, string> = {
+  "/cyrus.jpeg": "🏊‍♂️",
+  "/trent_locker.jpeg": "🐺",
+  "/trent_pool.webp": "🐺",
+};
+
 function renderPic(pic: string | undefined | null, size = 22, extraStyle?: React.CSSProperties): React.ReactNode {
   const p = pic || "🌑";
   if (p.startsWith("/") || p.startsWith("http") || p.startsWith("data:")) {
-    return <img src={p} alt="" style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, display: "inline-block", verticalAlign: "middle", ...extraStyle }} />;
+    const fallbackEmoji = PIC_EMOJI_FALLBACK[p] || "🌑";
+    return (
+      <img
+        src={p}
+        alt=""
+        onError={(e) => {
+          // Swap the broken <img> for an inline emoji span so the user sees something.
+          const el = e.currentTarget;
+          const span = document.createElement("span");
+          span.textContent = fallbackEmoji;
+          span.style.fontSize = `${size * 0.85}px`;
+          span.style.lineHeight = "1";
+          span.style.display = "inline-flex";
+          span.style.alignItems = "center";
+          span.style.justifyContent = "center";
+          span.style.width = `${size}px`;
+          span.style.height = `${size}px`;
+          span.style.verticalAlign = "middle";
+          el.replaceWith(span);
+        }}
+        style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, display: "inline-block", verticalAlign: "middle", ...extraStyle }}
+      />
+    );
   }
   return <span style={{ fontSize: size * 0.85, lineHeight: 1, flexShrink: 0, ...extraStyle }}>{p}</span>;
 }
