@@ -4838,16 +4838,30 @@ export default function Umbra() {
         canSeeAuction: tier === "apex" || tier === "faculty",
         canSeeRelief: tier === "apex" || tier === "faculty",
       };
-      const res = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: cleanUN, password: newPW.trim(), profile: profileData }),
-      });
+      // Hard 25-second timeout so the user is never stuck on "ENTERING…" forever.
+      // If Supabase is rate-limiting (3 signups/hr/IP on the free tier) or just
+      // slow, abort and fall through to the catch block which creates an offline
+      // account so the user can still enter the app.
+      const signupCtrl = new AbortController();
+      const signupTimeout = setTimeout(() => signupCtrl.abort(), 25000);
+      let res: Response;
+      try {
+        res = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: cleanUN, password: newPW.trim(), profile: profileData }),
+          signal: signupCtrl.signal,
+        });
+      } finally {
+        clearTimeout(signupTimeout);
+      }
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 409 && data.suggestion) {
           setRegError(`Username "${cleanUN}" is already taken. Try: ${data.suggestion}`);
           setNewUN(data.suggestion);
+        } else if (res.status === 429 || (data.error || "").toLowerCase().includes("rate")) {
+          setRegError("Supabase is rate-limiting signups from your network (3/hr on the free tier). Wait an hour, OR sign in to an existing account, OR — your account has been created locally and is usable on THIS device only. Hit Enter Noctis again to continue offline.");
         } else {
           setRegError(data.error || "Signup failed. Try a different username.");
         }
@@ -6628,8 +6642,18 @@ export default function Umbra() {
                   {regSubmitting ? "ENTERING…" : "ENTER NOCTIS"}
                 </button>
                 <p style={{ fontSize: 11, color: "#6a5840", textAlign: "center", marginTop: 8, fontFamily: "'IM Fell English',serif", fontStyle: "italic" }}>
-                  {regSubmitting ? "Creating your account…" : "The shadows await your arrival."}
+                  {regSubmitting ? "Creating your account… (timing out at 25 s if Supabase is slow)" : "The shadows await your arrival."}
                 </p>
+                {/* Emergency escape hatch: if the user is stuck on ENTERING they can
+                    bail out manually and try again with a different username, or use
+                    offline mode. */}
+                {regSubmitting && (
+                  <button type="button"
+                    onClick={(e) => { e.preventDefault(); setRegSubmitting(false); setRegError("Cancelled. Try again or change your username."); }}
+                    style={{ marginTop: 10, background: "none", border: "1px solid #5a4a32", color: "#9a8868", padding: "8px 18px", borderRadius: 6, fontSize: 11, cursor: "pointer", fontFamily: "'Cormorant Garamond',serif", letterSpacing: "0.08em" }}>
+                    Cancel — try again
+                  </button>
+                )}
               </div>
             )}
         </div>
