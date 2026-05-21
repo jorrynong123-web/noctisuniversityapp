@@ -18,6 +18,30 @@ export function getStoredCreds(): AICreds | null {
   }
 }
 
+// Normalise the user's "API base" so common mistakes still work.
+// Accepts any of:
+//   https://api.groq.com/openai           (Groq, no /v1)
+//   https://api.groq.com/openai/v1        (Groq, with /v1 — correct)
+//   https://api.openai.com                (OpenAI, no /v1)
+//   https://api.openai.com/v1             (OpenAI, with /v1 — correct)
+//   https://api.openai.com/v1/chat/completions  (full path — strip the tail)
+// Returns the absolute endpoint URL ending in /chat/completions.
+function buildChatEndpoint(rawBase: string): string {
+  let base = rawBase.trim().replace(/\/+$/, "");
+  // If user pasted the full endpoint, strip the tail
+  base = base.replace(/\/chat\/completions$/, "");
+  // Auto-append /v1 if there's no version segment (covers OpenAI, Groq, Together, OpenRouter…)
+  const hasVersion = /\/v\d+$/.test(base) || /\/openai$/.test(base) === false && /\/api\/v\d+$/.test(base);
+  if (!/\/v\d+$/.test(base) && !/\/openai\/v\d+$/.test(base)) {
+    // For Groq specifically: append /v1 after /openai if missing
+    if (/\/openai$/.test(base)) base = base + "/v1";
+    // For everything else without a version: append /v1
+    else if (!/\/v\d+/.test(base)) base = base + "/v1";
+  }
+  void hasVersion;
+  return base + "/chat/completions";
+}
+
 export async function callLLM(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
   creds?: AICreds | null,
@@ -25,26 +49,50 @@ export async function callLLM(
 ): Promise<string> {
   const c = creds ?? getStoredCreds();
   if (!c) throw new Error("no-api-key");
-  const endpoint = c.apiBase.replace(/\/$/, "") + "/chat/completions";
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${c.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: c.model,
-      messages,
-      max_tokens: opts?.maxTokens ?? 200,
-      temperature: opts?.temperature ?? 0.85,
-    }),
-  });
+  const endpoint = buildChatEndpoint(c.apiBase);
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${c.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: c.model,
+        messages,
+        max_tokens: opts?.maxTokens ?? 200,
+        temperature: opts?.temperature ?? 0.85,
+      }),
+    });
+  } catch (netErr: any) {
+    console.error("[callLLM] network/CORS failure calling", endpoint, "→", netErr?.message || netErr);
+    throw new Error(`Network/CORS error contacting ${endpoint}. Check the API endpoint URL in Settings.`);
+  }
   if (!res.ok) {
     const err = await res.text().catch(() => "");
+    console.error("[callLLM]", res.status, "from", endpoint, "→", err.slice(0, 400));
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("LLM auth failed (401/403). Your API key is wrong or expired. Re-paste it in Settings.");
+    }
+    if (res.status === 404) {
+      throw new Error(`LLM endpoint not found (404). Endpoint tried: ${endpoint}. Your "API Endpoint" in Settings is wrong — check that it ends in /v1 (e.g. https://api.groq.com/openai/v1).`);
+    }
+    if (res.status === 429) {
+      throw new Error("LLM rate limit (429). Slow down or check your usage quota.");
+    }
+    if (res.status >= 400 && res.status < 500) {
+      throw new Error(`LLM client error ${res.status}: ${err.slice(0, 200)} — likely a wrong model name or invalid request.`);
+    }
     throw new Error(`LLM ${res.status}: ${err.slice(0, 200)}`);
   }
   const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim() ?? "";
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) {
+    console.warn("[callLLM] empty content in response", data);
+    throw new Error("LLM returned an empty reply. Check the model name in Settings.");
+  }
+  return content;
 }
 
 // ── System prompt builders ───────────────────────────────────────────────────

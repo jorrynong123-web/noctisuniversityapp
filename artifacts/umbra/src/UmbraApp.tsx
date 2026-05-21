@@ -104,10 +104,16 @@ async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promi
     }
     if (userMsg) msgs.push({ role: "user", content: userMsg });
 
-    const reply = await callLLM(msgs, creds, { maxTokens: 200, temperature: 0.88 }).catch(() => {
-      const fb = ["...", "I need a moment.", "We'll speak again soon.", "Not now."];
-      return fb[Math.floor(Math.random() * fb.length)];
-    });
+    let reply: string;
+    try {
+      reply = await callLLM(msgs, creds, { maxTokens: 200, temperature: 0.88 });
+    } catch (llmErr: any) {
+      const msg = llmErr?.message || String(llmErr ?? "unknown");
+      console.error("[ai/" + sub + "] LLM call failed:", msg);
+      // Surface the real error so users can fix their Settings instead of staring at "Not now."
+      // The chat UI will display this as the NPC's "reply" so the user sees what's broken.
+      return _apiOk({ reply: `[AI error: ${msg}]`, message: `[AI error: ${msg}]`, llmError: msg });
+    }
     return _apiOk({ reply, message: reply });
   }
 
@@ -172,8 +178,11 @@ async function _generateNPCPosts(creds?: ReturnType<typeof getStoredCreds>): Pro
   if (_genPostsRunning) return [];
   _genPostsRunning = true;
   try {
+    // CRITICAL: only pick NPCs, never real users. Real users have _real / isReal set
+    // by buildRealUser() — without this guard, signed-up players with Apex tier would
+    // have AI-generated posts ghost-written under their name. They wouldn't be amused.
     const npcList = (Object.values(ACCTS) as any[]).filter(
-      (u: any) => u.autoReply || u.tier === "apex" || u.tier === "ascendant" || u.tier === "elite"
+      (u: any) => !u._real && !u.isReal && !u.isGuest && (u.autoReply || u.tier === "apex" || u.tier === "ascendant" || u.tier === "elite")
     );
     const picks: any[] = [];
     const used = new Set<string>();
@@ -732,8 +741,9 @@ async function _generateNPCComments(
   authorId: string,
   creds: ReturnType<typeof getStoredCreds>
 ): Promise<void> {
+  // CRITICAL: never let a real player be picked as an NPC commenter.
   const pool = (Object.values(ACCTS) as any[]).filter(
-    (n: any) => n.personality && n.id !== authorId && !n.isGuest && n.un
+    (n: any) => n.personality && n.id !== authorId && !n.isGuest && !n._real && !n.isReal && n.un
   );
   const count = 1 + Math.floor(Math.random() * 2); // 1–2 comments per NPC post
   const commenters: any[] = [];
@@ -16609,8 +16619,8 @@ export default function Umbra() {
                   style={{ background: "none", border: "none", color: T.muted, fontSize: 16, cursor: "pointer", padding: "0 0 0 10px" }}>✕</button>
               </div>
               {[
-                { label: "API Endpoint", val: aiApiBase, set: setAiApiBase, placeholder: "https://api.groq.com/openai", type: "url" as const },
-                { label: "API Key", val: aiApiKey, set: setAiApiKey, placeholder: "sk-...", type: "password" as const },
+                { label: "API Endpoint", val: aiApiBase, set: setAiApiBase, placeholder: "https://api.groq.com/openai/v1", type: "url" as const },
+                { label: "API Key", val: aiApiKey, set: setAiApiKey, placeholder: "gsk_... or sk-...", type: "password" as const },
                 { label: "Model", val: aiModel, set: setAiModel, placeholder: "llama-3.1-8b-instant", type: "text" as const },
               ].map(({ label, val, set, placeholder, type }) => (
                 <div key={label} style={{ marginBottom: 8 }}>
@@ -18042,8 +18052,8 @@ export default function Umbra() {
             ))}
           </div>
           {[
-            { label: "API ENDPOINT", val: aiApiBase, set: setAiApiBase, placeholder: "https://api.groq.com/openai", type: "url" as const },
-            { label: "API KEY", val: aiApiKey, set: setAiApiKey, placeholder: "sk-...", type: "password" as const },
+            { label: "API ENDPOINT", val: aiApiBase, set: setAiApiBase, placeholder: "https://api.groq.com/openai/v1", type: "url" as const },
+            { label: "API KEY", val: aiApiKey, set: setAiApiKey, placeholder: "gsk_... or sk-...", type: "password" as const },
             { label: "MODEL", val: aiModel, set: setAiModel, placeholder: "llama-3.1-8b-instant", type: "text" as const },
           ].map(({ label, val, set, placeholder, type }) => (
             <div key={label} style={{ marginBottom: 8 }}>
