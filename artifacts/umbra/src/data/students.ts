@@ -459,6 +459,7 @@ export const STUDENTS = [
       "Coldly precise. Never raises her voice. Everything she does is a proof — she already knows the answer before you begin the problem.",
     pets: ["pet_001", "pet_002", "pet_003"],
     clubs: ["cl_chess", "cl_inv", "cl_mar"],
+    _real: true, // user-flagged: do not let AI generate posts/comments for this account
   },
   {
     id: "vii_imperator",
@@ -492,6 +493,7 @@ export const STUDENTS = [
     personality: "Omniscient. Patient. Architects situations years in advance. Every conversation is a gambit. You are always two moves behind.",
     pets: ["pet_004"],
     clubs: ["cl_chess", "cl_law", "cl_syncsw"],
+    _real: true, // user-flagged: do not let AI generate posts/comments for this account
   },
   {
     id: "sebastian_blackwood",
@@ -1869,6 +1871,7 @@ export const STUDENTS = [
     personality: "Controlled precision. Never wastes a word. The mint aesthetic is deliberate — softness as camouflage. She is the most dangerous person in any room who doesn't look like it.",
     pets: [],
     clubs: ["cl_fen", "cl_ten"],
+    _real: true, // user-flagged: do not let AI generate posts/comments for this account
   },
   // ── POLAPOLA (exclusive lolita theme — Films & TV Apex) ──
   {
@@ -1902,6 +1905,7 @@ export const STUDENTS = [
     personality: "Dreamy but dangerously precise. Speaks in metaphors that turn out to be instructions. Has never raised her voice. Has never needed to. Her aesthetic is not affectation — it is armour in lace.",
     pets: [],
     clubs: ["cl_film", "cl_art", "cl_ten"],
+    _real: true, // user-flagged: do not let AI generate posts/comments for this account
   },
 
   // ── YVONNE EVERLEIGH (exclusive dark amethyst theme — English Literature Apex) ──
@@ -1985,6 +1989,7 @@ export const STUDENTS = [
     traits: ["Old Money", "Strategic Mind", "Cold Blooded", "Legacy", "Untouchable"],
     canSeeAuction: true, canSeeRelief: true, pets: [], autoReply: true,
     clubs: ["cl_law", "cl_deb", "cl_mar"],
+    _real: true, // user-flagged: do not let AI generate posts/comments for this account
   },
   {
     id: "sylvie_moreau", un: "Sylvie Moreau", handle: "@sylvie_moreau", pw: "sylvie2024",
