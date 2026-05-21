@@ -1793,31 +1793,45 @@ export default function Umbra() {
     const cleaned = raw.toLowerCase().replace(/\s+/g, "_");
     setUnStatus("checking");
     setUnSuggestion("");
+    let cancelled = false;
     const handle = setTimeout(async () => {
-      // 1. Check NPC accounts (synchronous, in-memory)
+      // 1. Check NPC accounts (synchronous, in-memory) — always works
       const npcTaken = (Object.values(ACCTS) as any[]).some(
         (u: any) => u.un?.toLowerCase() === raw.toLowerCase() || u.un?.toLowerCase().replace(/\s+/g, "_") === cleaned
       );
       if (npcTaken) {
-        setUnStatus("taken");
-        setUnSuggestion(`${cleaned}_${Math.floor(Math.random() * 900) + 100}`);
+        if (!cancelled) {
+          setUnStatus("taken");
+          setUnSuggestion(`${cleaned}_${Math.floor(Math.random() * 900) + 100}`);
+        }
         return;
       }
-      // 2. Check Supabase real users
+      // 2. Race the Supabase check against a hard 3-second timeout. If Supabase
+      //    is slow/paused/rate-limited, we optimistically say "available" — the
+      //    actual signup flow will catch any real duplicate. This guarantees the
+      //    check never spins forever and blocks the user from proceeding.
+      let dbTaken = false;
       if (supabase) {
         try {
-          const { data } = await supabase.from("profiles").select("id").eq("username", cleaned).maybeSingle();
-          if (data) {
-            setUnStatus("taken");
-            setUnSuggestion(`${cleaned}_${Math.floor(Math.random() * 900) + 100}`);
-            return;
-          }
+          const result = await Promise.race([
+            supabase.from("profiles").select("id").eq("username", cleaned).maybeSingle(),
+            new Promise<{ data: null; error: any }>((resolve) =>
+              setTimeout(() => resolve({ data: null, error: new Error("timeout") }), 3000)
+            ),
+          ]);
+          if (result && (result as any).data) dbTaken = true;
         } catch {}
       }
-      setUnStatus("available");
-      setUnSuggestion("");
+      if (cancelled) return;
+      if (dbTaken) {
+        setUnStatus("taken");
+        setUnSuggestion(`${cleaned}_${Math.floor(Math.random() * 900) + 100}`);
+      } else {
+        setUnStatus("available");
+        setUnSuggestion("");
+      }
     }, 400);
-    return () => clearTimeout(handle);
+    return () => { cancelled = true; clearTimeout(handle); };
   }, [newUN]);
 
   // Login
@@ -2149,6 +2163,46 @@ export default function Umbra() {
     if (t === "ascendant") return 100000;
     return 50000; // merit / commoner / pet / anything else
   };
+  // Background drain for any "pending signups" — accounts that were created
+  // locally during a Supabase outage / rate-limit. Retries the real signup
+  // every 60s so they end up on the server once the network clears.
+  useEffect(() => {
+    let stopped = false;
+    const drain = async () => {
+      if (stopped) return;
+      let pending: any[] = [];
+      try { pending = JSON.parse(localStorage.getItem("umbra_pending_signups") || "[]"); } catch {}
+      if (pending.length === 0) return;
+      const next: any[] = [];
+      for (const p of pending) {
+        if (p.attempts >= 30) continue; // give up after 30 tries (~30min)
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 7000);
+          const r = await fetch("/api/auth/signup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: p.username, password: p.password, profile: p.profile }),
+            signal: ctrl.signal,
+          });
+          clearTimeout(t);
+          if (r.ok) {
+            console.log("[pending-signup] synced", p.username);
+            continue; // success — don't keep in queue
+          }
+          // 409 = duplicate username (someone else took it) — drop
+          if (r.status === 409) { console.log("[pending-signup] username taken, dropping", p.username); continue; }
+        } catch {}
+        next.push({ ...p, attempts: (p.attempts || 0) + 1 });
+      }
+      try { localStorage.setItem("umbra_pending_signups", JSON.stringify(next)); } catch {}
+    };
+    // Run immediately on mount, then every 60s
+    drain();
+    const iv = setInterval(drain, 60000);
+    return () => { stopped = true; clearInterval(iv); };
+  }, []);
+
   // One-time migration: bring existing real-user wallets up to tier minimum.
   // Runs whenever `uid` changes (i.e. login/refresh). A localStorage flag
   // ensures we never re-pay the same browser session. Only ever INCREASES
@@ -4838,12 +4892,12 @@ export default function Umbra() {
         canSeeAuction: tier === "apex" || tier === "faculty",
         canSeeRelief: tier === "apex" || tier === "faculty",
       };
-      // Hard 25-second timeout so the user is never stuck on "ENTERING…" forever.
-      // If Supabase is rate-limiting (3 signups/hr/IP on the free tier) or just
-      // slow, abort and fall through to the catch block which creates an offline
-      // account so the user can still enter the app.
+      // 8-second timeout — short enough that users don't feel stuck. If Supabase
+      // is slow/paused/rate-limiting, we fall through to the offline-account
+      // fallback in the catch block. A background retry below will sync the
+      // account to Supabase when the network recovers.
       const signupCtrl = new AbortController();
-      const signupTimeout = setTimeout(() => signupCtrl.abort(), 25000);
+      const signupTimeout = setTimeout(() => signupCtrl.abort(), 8000);
       let res: Response;
       try {
         res = await fetch("/api/auth/signup", {
@@ -4857,16 +4911,17 @@ export default function Umbra() {
       }
       const data = await res.json();
       if (!res.ok) {
+        // Username collision is the only "hard stop" — for that, ask the user to
+        // pick another name. For ALL other backend errors we let signup fall
+        // through to the offline-account path so the user is never blocked.
         if (res.status === 409 && data.suggestion) {
           setRegError(`Username "${cleanUN}" is already taken. Try: ${data.suggestion}`);
           setNewUN(data.suggestion);
-        } else if (res.status === 429 || (data.error || "").toLowerCase().includes("rate")) {
-          setRegError("Supabase is rate-limiting signups from your network (3/hr on the free tier). Wait an hour, OR sign in to an existing account, OR — your account has been created locally and is usable on THIS device only. Hit Enter Noctis again to continue offline.");
-        } else {
-          setRegError(data.error || "Signup failed. Try a different username.");
+          setRegSubmitting(false);
+          return;
         }
-        setRegSubmitting(false);
-        return;
+        // Throw so the catch block below handles it identically to a network failure.
+        throw new Error(data.error || `Signup HTTP ${res.status}`);
       }
       setJWT(data.token);
       const acct = buildRealUser({ ...data.user, covenant: cov, tier, pic: chosenPic, bio: displayBio });
@@ -4889,11 +4944,14 @@ export default function Umbra() {
       setWalletBalance(startBal);
       finalId = acct.id;
     } catch (err: any) {
-      // Network is completely down — create a local-only account so the app is still usable.
-      console.error("[finishReg] exception:", err?.message || err);
-      const gid = `custom_${newUN.trim().toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
+      // Server unreachable / slow / rate-limited / Supabase paused — DO NOT block
+      // the user. Create a local account immediately so they enter the app,
+      // and queue a background retry to sync them to Supabase when possible.
+      console.warn("[finishReg] backend failed, falling back to local account:", err?.message || err);
+      const cleanUN = newUN.trim().toLowerCase().replace(/\s+/g, "_");
+      const gid = `custom_${cleanUN}_${Date.now()}`;
       const newAcct: any = {
-        id: gid, un: newUN.trim(), handle: `@${newUN.trim().toLowerCase().replace(/\s+/g, "_")}`,
+        id: gid, un: newUN.trim(), handle: `@${cleanUN}`,
         pw: newPW.trim(), cov, tier, pic: chosenPic,
         bio: displayBio,
         followers: 800 + Math.floor(Math.random() * 400), following: 20 + Math.floor(Math.random() * 80), gaze: 0, wealth, rep: "New Arrival",
@@ -4910,8 +4968,27 @@ export default function Umbra() {
       setWalletBalance(startBal);
       setAcctVer(v => v + 1);
       finalId = gid;
-      // Show a warning but still proceed — user gets offline account
-      setRegError("⚠️ Server unreachable — entering in offline mode. This account is device-only.");
+      // Queue a background sync — retry every 60s for up to 30min so the account
+      // ends up on Supabase when the rate limit/outage clears. No user prompts.
+      try {
+        const pendingKey = "umbra_pending_signups";
+        const pending = JSON.parse(localStorage.getItem(pendingKey) || "[]");
+        pending.push({
+          localId: gid, username: cleanUN, password: newPW.trim(),
+          profile: {
+            covenant: cov, tier, pic: chosenPic, bio: displayBio,
+            major: newMajor || "Undeclared", year: "Freshman", wealth,
+            gender: newGender || "prefer_not", pronouns: newPronouns || "",
+            quote: newQuote.trim(), academicFocus, personality: personalityTraits,
+            canSeeAuction: tier === "apex" || tier === "faculty",
+            canSeeRelief: tier === "apex" || tier === "faculty",
+          },
+          attempts: 0, createdAt: Date.now(),
+        });
+        localStorage.setItem(pendingKey, JSON.stringify(pending));
+      } catch {}
+      // No scary error message — silently enter the app
+      setRegError("");
     }
     setRegSubmitting(false);
     setUid(finalId);
