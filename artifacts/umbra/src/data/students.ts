@@ -2288,6 +2288,51 @@ export const STUDENTS = [
     defTheme: "collar", canPost: false, canTheme: false, badge: "🔒 PET", bColor: "#8b0000", cover: "⛓️",
     clubs: ["cl_collar"],
   },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  CYRUS WHITMORE — Affinity character #2 (mirrors Trent's relationship arc)
+  //  Innocent golden-retriever water polo utility player on the Silk Covenant
+  //  side. Recently rewired by porn and obsessed with the user. Stuttering
+  //  avoidance at low affinity → desperate worship at high affinity.
+  // ─────────────────────────────────────────────────────────────────────────
+  {
+    id: "cyrus_whitmore",
+    un: "Cyrus Whitmore",
+    handle: "@cyrus_whitmore",
+    pw: "cyrus2024",
+    cov: "silk",
+    tier: "ascendant",
+    pic: "/cyrus.jpeg",
+    bio: "Water polo utility. Sterling Hall. Ascendant.\nMontana boy. Trying to be a good person.\nPlease don't ask me what I'm thinking about.",
+    followers: 3120,
+    following: 88,
+    gaze: 4980,
+    isVerified: true,
+    isSpecial: true,
+    autoReply: true,
+    affinityTarget: true,
+    age: 21,
+    height: "6'2\"",
+    weight: "185 lbs",
+    wealth: "New Money",
+    rep: "Golden Retriever",
+    defTheme: "silk_dawn",
+    canPost: true,
+    canTheme: true,
+    badge: "🌊 ASCENDANT",
+    bColor: "#a4cce8",
+    cover: "🌊",
+    major: "Sports Science",
+    year: "Junior",
+    greek: "None",
+    family:
+      "Whitmore family — small Montana church town. Middle-class background, struck it rich through his father's tech investments. Three younger sisters at home. Cyrus sends money home weekly even though the family doesn't need it.",
+    personality:
+      "Innocent golden-retriever himbo on the surface — sweet, helpful, every teammate's favourite. Underneath, completely spiraling: best friend Drew showed him porn two weeks ago and his entire wiring short-circuited. Now he can't be within ten feet of the user without getting hard, so he avoids them while drowning in guilt. Wants to be a good person while wanting to do extremely not-good things to his best friend. Desperate, touch-starved, virgin, terrified.",
+    traits: ["Athletic", "Religious Background", "Touch-Starved", "Virgin", "Obsessive"],
+    pets: [],
+    clubs: ["cl_wp", "cl_sw", "cl_div"],
+  },
 ];
 
 // ─── XP LEVEL THRESHOLDS

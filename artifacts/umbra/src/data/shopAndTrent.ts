@@ -47,6 +47,16 @@ export const SHOP_ITEMS = {
     { id: "gift_book", name: "Sun Tzu — The Art of War (Gold Edition)", desc: "He keeps a copy in his locker. This one's better.", price: 95, icon: "📖", isGift: true, giftTarget: "trent_morrison", relPoints: 45, stock: 999 },
     { id: "gift_cold_brew", name: "Cold Brew Starter Kit", desc: "He drinks it black at 4:55 AM. You know that because you notice things.", price: 55, icon: "☕", isGift: true, giftTarget: "trent_morrison", relPoints: 25, stock: 999 },
     { id: "gift_pool_pass", name: "Private Pool Hour Pass", desc: "A block-booked hour at the East Wing pool. No audience. Just him.", price: 500, icon: "🌊", isGift: true, giftTarget: "trent_morrison", relPoints: 120, stock: 20 },
+
+    // ── Cyrus Whitmore gifts ────────────────────────────────────────────────
+    { id: "gift_cyrus_vanilla", name: "Vanilla Pillar Candle", desc: "The scent that already lives in his head rent-free. He'll know exactly why you bought it. He'll lie about not noticing.", price: 60, icon: "🕯️", isGift: true, giftTarget: "cyrus_whitmore", relPoints: 55, stock: 999 },
+    { id: "gift_cyrus_protein", name: "Whey Stack (Vanilla)", desc: "His protein brand. The vanilla flavour. You picked the one that smells like you on purpose, didn't you.", price: 75, icon: "🥤", isGift: true, giftTarget: "cyrus_whitmore", relPoints: 40, stock: 999 },
+    { id: "gift_cyrus_cross", name: "Silver Cross Necklace", desc: "Like the one his mother gave him, only newer. He'll wear it. He'll feel guilty wearing it. He'll keep wearing it.", price: 180, icon: "✝️", isGift: true, giftTarget: "cyrus_whitmore", relPoints: 70, stock: 999 },
+    { id: "gift_cyrus_hoodie", name: "Vanilla-Scented Hoodie", desc: "Your hoodie. With your scent. He'll bury his face in it the moment he's alone and pretend he didn't.", price: 95, icon: "🧥", isGift: true, giftTarget: "cyrus_whitmore", relPoints: 80, stock: 999 },
+    { id: "gift_cyrus_cap", name: "Water Polo Cap (Utility)", desc: "Replica of his match cap, number engraved inside. He keeps it on his nightstand. He won't tell anyone why.", price: 140, icon: "🤽", isGift: true, giftTarget: "cyrus_whitmore", relPoints: 65, stock: 999 },
+    { id: "gift_cyrus_devotional", name: "Daily Devotional (Leather)", desc: "Pretty cover. Pretty verses. He'll thank you and then pray over it tonight. He needs all the help he can get.", price: 50, icon: "📕", isGift: true, giftTarget: "cyrus_whitmore", relPoints: 30, stock: 999 },
+    { id: "gift_cyrus_polaroid", name: "Polaroid of You (signed)", desc: "Signed on the back. He'll hide it in his Bible. He'll look at it more than the Bible.", price: 220, icon: "📸", isGift: true, giftTarget: "cyrus_whitmore", relPoints: 95, stock: 999 },
+    { id: "gift_cyrus_lane", name: "Private Lane — East Wing Pool", desc: "A whole lane booked for him for the night. Alone. With his thoughts. You know exactly what you've done.", price: 480, icon: "🌊", isGift: true, giftTarget: "cyrus_whitmore", relPoints: 130, stock: 20 },
   ],
 };
 
@@ -271,3 +281,186 @@ export const TRENT_PIC_REPLIES: string[] = [
   "That's a bold choice. I respect it.",
   "I have no response. I have many responses. I'm keeping them to myself.",
 ];
+
+// ════════════════════════════════════════════════════════════════════════════
+// CYRUS WHITMORE — Affinity character #2
+// Arc: polite stranger → comfortable best friend → stuttering avoidance after
+// his porn-induced spiral → confessions slipping out → fully devoted worship.
+// Levels mirror Trent's so the UI can reuse the same level-bar component.
+// ════════════════════════════════════════════════════════════════════════════
+export const CYRUS_REL_LEVELS = [
+  { level: 0, name: "Stranger", min: 0, color: "#6a6a6a" },
+  { level: 1, name: "Friendly", min: 10, color: "#8aa6c2" },
+  { level: 2, name: "Best Friend", min: 50, color: "#a4cce8" },
+  { level: 3, name: "Flustered", min: 150, color: "#d4af37" },
+  { level: 4, name: "Smitten", min: 300, color: "#ff6f91" },
+  { level: 5, name: "Devoted", min: 500, color: "#ff3d6b" },
+];
+
+// L0 — Stranger: polite, oblivious, has no idea who you are
+export const CYRUS_REPLIES_L0 = [
+  "Oh hey! Uh — sorry, do we have a class together?",
+  "Hi! I think I've seen you around. I'm Cyrus.",
+  "Hey, sorry, on my way to practice — talk later?",
+  "Yeah of course! Anything for a Noctis student.",
+  "Sorry, do I know you from somewhere? I'm bad with faces.",
+  "Hi! Drew told me you might message — I think? Anyway, what's up?",
+  "Hey hey. Just got out of the pool, sorry if I'm short.",
+  "Yeah no worries! Always happy to help.",
+  "Sorry, juggling like four things right now — what do you need?",
+  "Hi! I should probably study but I have like ten minutes.",
+];
+
+// L1 — Friendly: warm, helpful, treats you like a sweet classmate
+export const CYRUS_REPLIES_L1 = [
+  "Hey you! What's going on?",
+  "Yeah I remember you. The one who actually laughed at my joke. That's a low bar but you cleared it.",
+  "Walked past you in the dining hall today — sorry I was in a rush.",
+  "If you need anything just text me. I mean that. I'm a 'text me' kind of guy.",
+  "How's your week going? Mine's been pool, pool, more pool.",
+  "Drew keeps saying you're cool. He's not usually right about people. So I'm reserving judgment. Kidding. Mostly.",
+  "Did you eat? I'm always asking that. Sorry. Big-brother brain.",
+  "I have practice till 7 but I'm free after if you want to grab coffee or something.",
+  "Hey just checking — you got home okay last night, right?",
+  "I'd say I'm busy but honestly I'd cancel for almost anything you asked.",
+];
+
+// L2 — Best Friend: comfortable, protective, sweet, pre-porn vibes
+export const CYRUS_REPLIES_L2 = [
+  "You okay? I felt like something was off earlier.",
+  "Let me walk you home, it's dark.",
+  "I saved you a seat at the team table. Don't make it weird, just sit down.",
+  "Did you eat today? Be honest. I will know if you lie.",
+  "You don't have to answer right now but I'm worried about you. Just text me when you can.",
+  "I told Drew off for the thing he said. You don't have to thank me. But you can.",
+  "Stay over. Couch is yours. I'll take the floor.",
+  "I picked up your favourite from the dining hall. Yeah, I memorised it. Shut up.",
+  "If anyone bothers you again you come straight to me. I mean it.",
+  "Hey. I'm proud of you. That's all. Goodnight.",
+];
+
+// L3 — Flustered: post-porn spiral. Stuttering, voice cracks, can't make eye contact
+export const CYRUS_REPLIES_L3 = [
+  "H-hey. Sorry. I — yeah. What's up?",
+  "Can't talk right now. Practice. I'm at practice. Bye!",
+  "I'm — I have to go. Sorry. Nothing's wrong. Going.",
+  "Did you just walk by? I wasn't looking. I mean I saw you. Whatever, bye.",
+  "Sorry I've been weird. I'm not weird. I'm fine. Everything's fine.",
+  "I'm not avoiding you. …Okay maybe a little. It's not — it's not what you think.",
+  "Why are you wearing that. I mean it looks good. Forget I said anything. I'm going.",
+  "Please stop standing that close. No reason. Just — yeah.",
+  "I can't hang out tonight. I know I said I could. I lied. I'm sorry.",
+  "Your hair smells good. I MEAN — not that I was — okay leaving now.",
+  "I think about you a lot. I'm going to delete that message. Don't reply.",
+  "I prayed about this. It didn't help. Going to practice.",
+];
+
+// L4 — Smitten: confessions slipping out, embarrassed but can't stop
+export const CYRUS_REPLIES_L4 = [
+  "I think I've been an idiot. Can we talk? Not now. I don't know when. Just — soon.",
+  "Drew said I should just tell you. I'm not going to tell you. But he said it.",
+  "I had a dream about you. I'm not going to describe it. I'm sorry I told you that. I'm going to bed.",
+  "I noticed you talking to that guy. I'm choosing not to feel anything about it. It's not working.",
+  "You smelled like vanilla in class today. I don't know why I told you that. I'm losing my mind.",
+  "I deleted your number and re-added it twice tonight. So.",
+  "I jogged past your dorm 'on my route'. It's not on my route. You know that.",
+  "If you wanted me to leave you alone you should have said it before I — never mind. Forget it.",
+  "I'm trying to be a good friend. I'm trying really hard. I don't think I'm succeeding.",
+  "Can I see you? Just see you. Like for a second. I don't want anything. I do want something. Forget I asked.",
+  "You touched my arm yesterday. I haven't been right since. Just thought you should know. Maybe.",
+  "I'm a mess and it's your fault and I'd let you keep doing it.",
+];
+
+// L5 — Devoted: fully honest, worshipful, no more hiding
+export const CYRUS_REPLIES_L5 = [
+  "Hi. I'm here. I'm always going to be here. I'm done pretending I'm not.",
+  "I love you. I prayed about saying it and prayed about not saying it. I'm saying it.",
+  "Whatever you want. I mean it. Whatever you want — I'm in.",
+  "I'd ruin every quiet thing my mother taught me before I'd let you walk past me again.",
+  "I'm not a good Christian boy anymore. I'm yours. I'd like to be both. I'll figure it out.",
+  "You're the first thing I think about. You're the last thing I think about. You're every thing in between. I tried fixing it. Couldn't.",
+  "Tell me what you want and I'll do it. Tell me to stay and I'll stay. Tell me to leave — please don't tell me to leave.",
+  "I have a list. I made it during Bible study. It's of things I want to do to you. I'm not showing you. Yet.",
+  "I'm holding your hand under the table at dinner. Yes I'm doing it on purpose. No I will not let go.",
+  "Wear my jacket. Wear my cap. Wear whatever you want of mine. They look better on you. Everything looks better on you.",
+  "I want to be the only one. I know how that sounds. I want to be the only one anyway.",
+  "Come over. Stay. I sleep better with you in the room. I sleep better with you in my bed. I'll behave. I won't behave. Tell me which.",
+];
+
+export const CYRUS_GIFT_REPLIES: Record<string, string[]> = {
+  gift_cyrus_vanilla: [
+    "Why did you — oh. Oh god. You know.",
+    "I'm not lighting it. I'm not lighting it. I'm going to light it. It's on my desk right now.",
+    "You picked vanilla. On purpose. I'm — I have to lie down.",
+    "I'm sleeping next to a vanilla candle now. I'm going to hell.",
+    "Thank you. That's it. That's the whole text. Bye.",
+  ],
+  gift_cyrus_protein: [
+    "You know my flavour. How do you know my flavour. Don't answer that.",
+    "Vanilla. Of course it's vanilla. You're — okay. Thanks.",
+    "I'm drinking this for breakfast and I'm going to think about you. Sorry. Not sorry. Sorry.",
+    "I literally drink this every day. You paid attention. I noticed you paying attention. I'm spiralling.",
+    "You bought me protein. I'm trying not to read into it. I am reading into it.",
+  ],
+  gift_cyrus_cross: [
+    "My mom would cry. I'm going to cry. I'm not crying. Okay I'm putting it on.",
+    "This is — this is really thoughtful. I don't deserve this. Thank you.",
+    "I'm wearing it. I'm wearing it right now. Don't make me explain how I feel about this.",
+    "You got me a cross. While I'm having impure thoughts about you. The irony is killing me.",
+    "I'll wear it every day. I mean that.",
+  ],
+  gift_cyrus_hoodie: [
+    "It smells like — oh no.",
+    "I'm not taking this off. I'm not. I'm wearing it to practice. Drew is going to know.",
+    "You sent me your hoodie. With your scent. Are you trying to kill me.",
+    "I'm sleeping in this. That's it. That's my entire personality now.",
+    "I'm going to wear this until it doesn't smell like you anymore. Then I'm going to ask for another one. I'm not okay.",
+  ],
+  gift_cyrus_cap: [
+    "You bought my cap. With my number. That's — wow.",
+    "I'm putting it on my nightstand. Don't make this a thing. It's a thing.",
+    "You memorised my number. Of course you did. You're you.",
+    "This is on display in my room now. The whole team is going to ask. I'm going to lie.",
+    "Thanks. Really. I'll keep it forever.",
+  ],
+  gift_cyrus_devotional: [
+    "You're sending me to church. Cute. Thank you. I need it.",
+    "I'm reading this tonight. I'm probably going to fail anyway. But thank you.",
+    "This is the kindest thing anyone has given me. I'm so unworthy of it. I love it.",
+    "My mom would love you. I love that you got this. I love a lot of things.",
+    "I'm praying with this. I'm praying about you with this. Don't tell me how to feel about that.",
+  ],
+  gift_cyrus_polaroid: [
+    "You signed it. You signed it.",
+    "It's in my Bible. I know how that sounds. I'm not moving it.",
+    "I'm looking at this more than I should. I'm telling you that. I trust you with that.",
+    "I have a picture of you. Signed. By you. I'm not okay. I love it.",
+    "I'm hiding this so well no one will ever find it. Except me. Hourly.",
+  ],
+  gift_cyrus_lane: [
+    "You booked me a lane. To be alone in. With my thoughts. About you.",
+    "I'm — okay. Thank you. I'm going to swim until I forget my own name.",
+    "This is going to be three hours of laps and one specific person on my mind.",
+    "Are you coming with me. Please come with me. I don't know what I'll do if you do.",
+    "Best gift anyone's given me. I mean that. Even though it's also kind of a sentence.",
+  ],
+};
+
+export const CYRUS_PIC_REPLIES: string[] = [
+  "I — oh no. I'm putting my phone face-down. I'm picking it up. I'm putting it down.",
+  "You shouldn't send me things like that. Send me more things like that.",
+  "I'm at practice. I was at practice. I have to lie to my coach now.",
+  "I'm screenshotting that. I shouldn't have told you that.",
+  "I'm not looking at this. I'm looking at this. I'm only human.",
+  "This is — this is — please stop. Don't stop.",
+  "I prayed before opening this. It didn't help.",
+  "Drew is sitting next to me. You're going to get me caught.",
+  "I'm in chapel right now. I cannot believe what you've done.",
+  "I'm saving this. I'm sorry. I'm saving it forever.",
+  "You know exactly what you're doing. I'm not going to recover from this.",
+  "I love you. I shouldn't have said that on a picture. Whatever. I love you.",
+  "I am genuinely sweating. Thank you. Don't stop.",
+  "I have to go run laps now. You did this.",
+  "This is going to be the only thing in my head for the next 48 hours. Hope you're proud.",
+];
+

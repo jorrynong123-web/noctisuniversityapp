@@ -17,7 +17,7 @@ import { PROFILE_TAGS, XP_LEVELS, getXPLevel } from "./data/xpData";
 import { CLUBS, CHAMPS, HOTTEST_CATS } from "./data/clubs";
 import { PROFS } from "./data/profs";
 import { LOTS, INIT_CONFS, PARTIES, TWISTED, LIVES, QNA_INIT, ANNOUNCEMENTS, RELIEF_ROOMS, QUIZ, TIER_QUIZ, INIT_POSTS } from "./data/npcData";
-import { SHOP_ITEMS, DAILY_DEALS, FLASH_SALES, PORTAL_LISTINGS, TRENT_REL_LEVELS, TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5, TRENT_GIFT_REPLIES, TRENT_PIC_REPLIES } from "./data/shopAndTrent";
+import { SHOP_ITEMS, DAILY_DEALS, FLASH_SALES, PORTAL_LISTINGS, TRENT_REL_LEVELS, TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5, TRENT_GIFT_REPLIES, TRENT_PIC_REPLIES, CYRUS_REL_LEVELS, CYRUS_REPLIES_L0, CYRUS_REPLIES_L1, CYRUS_REPLIES_L2, CYRUS_REPLIES_L3, CYRUS_REPLIES_L4, CYRUS_REPLIES_L5, CYRUS_GIFT_REPLIES, CYRUS_PIC_REPLIES } from "./data/shopAndTrent";
 import { AUTO_C, AUTO_UN, NPC_COMMENTERS, UNSPLASH_PLACEHOLDERS } from "./data/feedData";
 import { supabase } from "./lib/supabase";
 import { callLLM, getStoredCreds, buildNPCPrompt, buildProfPrompt, buildNPCPostPrompt, testLLMConnection } from "./lib/ai";
@@ -67,6 +67,10 @@ async function _handleAIRoute(sub: string, body: Record<string, unknown>): Promi
       if (npcId === "trent_morrison") {
         const pools = [TRENT_REPLIES_L0, TRENT_REPLIES_L1, TRENT_REPLIES_L2, TRENT_REPLIES_L3, TRENT_REPLIES_L4, TRENT_REPLIES_L5];
         const pool = pools[relLevel] || TRENT_REPLIES_L0;
+        reply = pool[Math.floor(Math.random() * pool.length)] || "...";
+      } else if (npcId === "cyrus_whitmore") {
+        const pools = [CYRUS_REPLIES_L0, CYRUS_REPLIES_L1, CYRUS_REPLIES_L2, CYRUS_REPLIES_L3, CYRUS_REPLIES_L4, CYRUS_REPLIES_L5];
+        const pool = pools[relLevel] || CYRUS_REPLIES_L0;
         reply = pool[Math.floor(Math.random() * pool.length)] || "...";
       } else if (isProfDM && Array.isArray(npc?.dms) && npc.dms.length > 0) {
         // Professors have a curated dms[] array — use it for in-character fallback
@@ -1852,6 +1856,11 @@ export default function Umbra() {
 
   // Trent long-term memory (per user, persisted server-side in profile.trentMemory)
   const [trentMemory, setTrentMemory] = useState<string>("");
+
+  // Cyrus relationship — parallel to Trent's. Points keyed by current uid.
+  const [cyrusRel, setCyrusRel] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem("umbra_cyrus_rel") || "{}"); } catch { return {}; }
+  });
 
   // Auction
   const [aTab, setATab] = useState("live");
@@ -4485,6 +4494,32 @@ export default function Umbra() {
     return TRENT_REPLIES_L0;
   }, [getTrentLevel]);
 
+  // ── CYRUS RELATIONSHIP ── (parallel system to Trent; same shape, different vibe)
+  const getCyrusLevel = useCallback((pts: number) => {
+    let lv = CYRUS_REL_LEVELS[0];
+    for (const l of CYRUS_REL_LEVELS) { if (pts >= l.min) lv = l; }
+    return lv;
+  }, []);
+
+  const addCyrusPoints = useCallback((userId: string, pts: number) => {
+    setCyrusRel(prev => {
+      const current = prev[userId] || 0;
+      const next = { ...prev, [userId]: current + pts };
+      try { localStorage.setItem("umbra_cyrus_rel", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const getCyrusReplyPool = useCallback((pts: number): string[] => {
+    const level = getCyrusLevel(pts).level;
+    if (level >= 5) return CYRUS_REPLIES_L5;
+    if (level >= 4) return CYRUS_REPLIES_L4;
+    if (level >= 3) return CYRUS_REPLIES_L3;
+    if (level >= 2) return CYRUS_REPLIES_L2;
+    if (level >= 1) return CYRUS_REPLIES_L1;
+    return CYRUS_REPLIES_L0;
+  }, [getCyrusLevel]);
+
   // Send a gift to Trent from inventory
   const giveGiftToTrent = useCallback(async (invItem: any) => {
     if (!uid || !user) return;
@@ -4539,6 +4574,63 @@ export default function Umbra() {
     setDmConvId("trent_morrison");
     setDmOpen(true);
   }, [uid, user, addTrentPoints, trentRel, getTrentLevel, dmConvId, toast]);
+
+  // Send a gift to Cyrus from inventory — parallel to giveGiftToTrent
+  const giveGiftToCyrus = useCallback(async (invItem: any) => {
+    if (!uid || !user) return;
+    const giftReplies = CYRUS_GIFT_REPLIES[invItem.itemId];
+    if (!giftReplies) { toast("Cyrus doesn't know what to do with that."); return; }
+    setInventory(prev => {
+      const idx = prev.findIndex((i: any) => i.invId === invItem.invId);
+      if (idx === -1) return prev;
+      const next = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      try { localStorage.setItem(`umbra_inventory_${uid}`, JSON.stringify(next)); } catch {}
+      return next;
+    });
+    const pts = invItem.relPoints || 30;
+    addCyrusPoints(uid, pts);
+    const cyrus = ACCTS["cyrus_whitmore"];
+    const giftMsg = `🎁 ${invItem.name}`;
+    const userMsg = { fromId: uid, fromUsername: user.un, fromPic: user.pic || "🌑", toId: "cyrus_whitmore", toUsername: cyrus?.un || "Cyrus Whitmore", text: giftMsg };
+    try {
+      const r = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(userMsg) });
+      const { message } = await r.json();
+      if (message && dmConvId === "cyrus_whitmore") setDmMessages(p => [...p, message]);
+    } catch {}
+    setTimeout(async () => {
+      try {
+        const aiRes = await fetch("/api/ai/npc-reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ npcId: "cyrus_whitmore", npcProfile: cyrus, history: [], userMessage: `${user.un} just sent you a gift: ${invItem.name}. React in character — you are a sweet, flustered, religious water polo player secretly obsessed with them.`, username: user.un, ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}) }),
+        });
+        const { reply } = await aiRes.json();
+        const replyText = reply || giftReplies[Math.floor(Math.random() * giftReplies.length)];
+        const autoMsg = { fromId: "cyrus_whitmore", fromUsername: cyrus?.un || "Cyrus Whitmore", fromPic: cyrus?.pic || "/cyrus.jpeg", toId: uid, toUsername: user.un, text: replyText };
+        const r2 = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoMsg) });
+        const { message: m2 } = await r2.json();
+        if (m2 && dmConvId === "cyrus_whitmore") setDmMessages(p => [...p, m2]);
+      } catch {
+        const replyText = giftReplies[Math.floor(Math.random() * giftReplies.length)];
+        const autoMsg = { fromId: "cyrus_whitmore", fromUsername: cyrus?.un || "Cyrus Whitmore", fromPic: cyrus?.pic || "/cyrus.jpeg", toId: uid, toUsername: user.un, text: replyText };
+        fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoMsg) }).then(async r => {
+          const { message: m2 } = await r.json();
+          if (m2 && dmConvId === "cyrus_whitmore") setDmMessages(p => [...p, m2]);
+        }).catch(() => {});
+      }
+    }, 2000 + Math.random() * 2000);
+    const newLvl = getCyrusLevel((cyrusRel[uid] || 0) + pts);
+    toast(`🎁 Gift sent to Cyrus! +${pts} relationship points · Level: ${newLvl.name}`);
+    setDmConvId("cyrus_whitmore");
+    setDmOpen(true);
+  }, [uid, user, addCyrusPoints, cyrusRel, getCyrusLevel, dmConvId, toast]);
+
+  // Dispatcher: route to the right gift handler based on the item's giftTarget.
+  // Keeps existing call sites working — they can pass any affinity gift here.
+  const giveGiftToAffinity = useCallback((invItem: any) => {
+    if (invItem?.giftTarget === "cyrus_whitmore") return giveGiftToCyrus(invItem);
+    return giveGiftToTrent(invItem);
+  }, [giveGiftToTrent, giveGiftToCyrus]);
 
   const getItemRating = useCallback((itemId: string) => {
     const r = reviews[itemId] || [];
@@ -5346,11 +5438,14 @@ export default function Umbra() {
 
       if (convUser && !convUser._real && (convUser.autoReply || convUser.personality)) {
         if (capturedConvId === "trent_morrison") addTrentPoints(uid, 1);
+        if (capturedConvId === "cyrus_whitmore") addCyrusPoints(uid, 1);
         // Filter history to THIS conversation only (fixes memory bug), sorted oldest-first
         const recentHistory = dmMessages
           .filter((m: any) => m.fromId === capturedConvId || m.toId === capturedConvId)
           .slice(-14);
-        const relLevel = capturedConvId === "trent_morrison" ? getTrentLevel(trentRel[uid] || 0).level : 0;
+        const relLevel = capturedConvId === "trent_morrison" ? getTrentLevel(trentRel[uid] || 0).level
+                       : capturedConvId === "cyrus_whitmore" ? getCyrusLevel(cyrusRel[uid] || 0).level
+                       : 0;
         const capturedMemory = capturedConvId === "trent_morrison" ? trentMemory : "";
         setDmTyping(true);
         const abortCtrl = new AbortController();
@@ -5365,8 +5460,11 @@ export default function Umbra() {
           .then(async ({ reply: rawReply }) => {
             clearTimeout(timeoutId);
             // Never silently drop — fall back to a short in-character line if the LLM returned nothing
+            // Fall back to the right reply pool (and level) for each affinity character.
             const reply = rawReply || (capturedConvId === "trent_morrison"
-              ? TRENT_REPLIES_L0[Math.floor(Math.random() * TRENT_REPLIES_L0.length)] || "."
+              ? (getTrentReplyPool(trentRel[uid] || 0)[Math.floor(Math.random() * 5)] || ".")
+              : capturedConvId === "cyrus_whitmore"
+              ? (getCyrusReplyPool(cyrusRel[uid] || 0)[Math.floor(Math.random() * 5)] || "...")
               : "...");
             const autoPayload = { fromId: capturedConvId, fromUsername: convUser.un, fromPic: convUser.pic || "🌑", toId: uid, toUsername: user.un, text: reply };
             const ar = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoPayload) });
@@ -5509,7 +5607,9 @@ export default function Umbra() {
         const recentHistory = dmMessages
           .filter((m: any) => m.fromId === capturedConvId || m.toId === capturedConvId)
           .slice(-14);
-        const relLevel = capturedConvId === "trent_morrison" ? getTrentLevel(trentRel[uid] || 0).level : 0;
+        const relLevel = capturedConvId === "trent_morrison" ? getTrentLevel(trentRel[uid] || 0).level
+                       : capturedConvId === "cyrus_whitmore" ? getCyrusLevel(cyrusRel[uid] || 0).level
+                       : 0;
         const capturedMemory = capturedConvId === "trent_morrison" ? trentMemory : "";
         setDmTyping(true);
         fetch("/api/ai/npc-reply", {
@@ -5520,7 +5620,9 @@ export default function Umbra() {
           .then(r2 => r2.json())
           .then(async ({ reply: rawReply2 }) => {
             const reply = rawReply2 || (capturedConvId === "trent_morrison"
-              ? TRENT_REPLIES_L0[Math.floor(Math.random() * TRENT_REPLIES_L0.length)] || "."
+              ? TRENT_PIC_REPLIES[Math.floor(Math.random() * TRENT_PIC_REPLIES.length)] || "."
+              : capturedConvId === "cyrus_whitmore"
+              ? CYRUS_PIC_REPLIES[Math.floor(Math.random() * CYRUS_PIC_REPLIES.length)] || "..."
               : "...");
             const autoPayload = { fromId: capturedConvId, fromUsername: convUser.un, fromPic: convUser.pic || "🌑", toId: uid, toUsername: user.un, text: reply };
             const ar = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoPayload) });
@@ -7768,8 +7870,10 @@ export default function Umbra() {
                   style={{ ...btn(false), marginTop: 38, fontSize: 12, marginLeft: 6 }}
                 >✉ DM</button>
               )}
-              {!isMe && pid === "trent_morrison" && uid && (() => {
-                const tl = getTrentLevel(trentRel[uid]||0);
+              {!isMe && (pid === "trent_morrison" || pid === "cyrus_whitmore") && uid && (() => {
+                const isTrent = pid === "trent_morrison";
+                const pts = isTrent ? (trentRel[uid]||0) : (cyrusRel[uid]||0);
+                const tl = isTrent ? getTrentLevel(pts) : getCyrusLevel(pts);
                 return (
                   <div style={{ marginTop: 38, marginLeft: 6, padding: "4px 10px", borderRadius: 12, border: `1px solid ${tl.color}`, background: T.dim, cursor: "pointer" }} onClick={(e) => { e.preventDefault(); setSubPage("shop"); setShopTab("gifts"); go("university"); }}>
                     <span style={{ fontSize: 11, color: tl.color, fontWeight: 700 }}>L{tl.level} {tl.name}</span>
@@ -16113,7 +16217,11 @@ export default function Umbra() {
                 const item = stack[0];
                 const qty = stack.length;
                 const isGiftForTrent = item.giftTarget === "trent_morrison";
-                const tl = isGiftForTrent && uid ? getTrentLevel(trentRel[uid]||0) : null;
+                const isGiftForCyrus = item.giftTarget === "cyrus_whitmore";
+                const isAffinityGift = isGiftForTrent || isGiftForCyrus;
+                const tl = isGiftForTrent && uid ? getTrentLevel(trentRel[uid]||0)
+                         : isGiftForCyrus && uid ? getCyrusLevel(cyrusRel[uid]||0)
+                         : null;
                 return (
                   <div key={item.itemId} style={{ ...card, marginBottom: 12, padding: "14px 14px 12px" }}>
                     <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -16140,9 +16248,9 @@ export default function Umbra() {
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as any, alignItems: "center" }}>
                           <span style={{ fontSize: 10, color: T.muted }}>Acquired {new Date(item.purchasedAt).toLocaleDateString()}</span>
                           {item.price && <span style={{ fontSize: 10, color: T.muted }}>· Paid ₦{item.price.toLocaleString()}</span>}
-                          {isGiftForTrent && (
-                            <button type="button" onClick={() => giveGiftToTrent(item)} style={{ ...btn(false), padding: "5px 12px", fontSize: 11, marginLeft: "auto", borderColor: T.primary, color: T.primary }}>
-                              🎁 Give to Trent
+                          {isAffinityGift && (
+                            <button type="button" onClick={() => giveGiftToAffinity(item)} style={{ ...btn(false), padding: "5px 12px", fontSize: 11, marginLeft: "auto", borderColor: T.primary, color: T.primary }}>
+                              🎁 Give to {isGiftForCyrus ? "Cyrus" : "Trent"}
                             </button>
                           )}
                         </div>
@@ -16507,55 +16615,61 @@ export default function Umbra() {
           {/* GIFTS TAB */}
           {shopTab === "gifts" && (
             <div>
-              {/* Relationship level display */}
-              {uid && (
-                <div style={{ ...card, padding: 14, marginBottom: 12, borderLeft: `3px solid ${getTrentLevel(trentRel[uid]||0).color}` }}>
-                  <p style={{ ...lbl, marginBottom: 6 }}>TRENT MORRISON — RELATIONSHIP</p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    {renderPic("/trent_pool.webp", 36)}
-                    <div>
-                      <p style={{ fontSize: 13, fontWeight: 700, color: getTrentLevel(trentRel[uid]||0).color }}>Level {getTrentLevel(trentRel[uid]||0).level} — {getTrentLevel(trentRel[uid]||0).name}</p>
-                      <p style={{ fontSize: 11, color: T.muted }}>{trentRel[uid]||0} pts · Send gifts to grow your relationship</p>
+              {/* Affinity banners — one per character */}
+              {uid && ([
+                { name: "TRENT MORRISON", pic: "/trent_pool.webp", pts: trentRel[uid]||0, lvl: getTrentLevel(trentRel[uid]||0), levels: TRENT_REL_LEVELS },
+                { name: "CYRUS WHITMORE", pic: "/cyrus.jpeg", pts: cyrusRel[uid]||0, lvl: getCyrusLevel(cyrusRel[uid]||0), levels: CYRUS_REL_LEVELS },
+              ].map(({ name, pic, pts, lvl, levels }) => {
+                const next = levels.find(l => l.min > pts);
+                const pct = next ? Math.min(100, ((pts - lvl.min) / (next.min - lvl.min)) * 100) : 100;
+                return (
+                  <div key={name} style={{ ...card, padding: 14, marginBottom: 12, borderLeft: `3px solid ${lvl.color}` }}>
+                    <p style={{ ...lbl, marginBottom: 6 }}>{name} — RELATIONSHIP</p>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      {renderPic(pic, 36)}
+                      <div>
+                        <p style={{ fontSize: 13, fontWeight: 700, color: lvl.color }}>Level {lvl.level} — {lvl.name}</p>
+                        <p style={{ fontSize: 11, color: T.muted }}>{pts} pts · Send gifts to grow your relationship</p>
+                      </div>
                     </div>
-                  </div>
-                  {/* Progress bar */}
-                  {(() => {
-                    const pts = trentRel[uid]||0;
-                    const cur = getTrentLevel(pts);
-                    const next = TRENT_REL_LEVELS.find(l => l.min > pts);
-                    if (!next) return <p style={{ fontSize: 11, color: "#ffd700", marginTop: 6 }}>★ Maximum level reached</p>;
-                    const pct = Math.min(100, ((pts - cur.min) / (next.min - cur.min)) * 100);
-                    return (
+                    {!next ? (
+                      <p style={{ fontSize: 11, color: "#ffd700", marginTop: 6 }}>★ Maximum level reached</p>
+                    ) : (
                       <div style={{ marginTop: 8 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: T.muted, marginBottom: 3 }}>
-                          <span>{cur.name}</span><span>{next.name} ({next.min - pts} pts away)</span>
+                          <span>{lvl.name}</span><span>{next.name} ({next.min - pts} pts away)</span>
                         </div>
                         <div style={{ background: T.dim, borderRadius: 4, height: 4, overflow: "hidden" }}>
-                          <div style={{ width: `${pct}%`, height: "100%", background: cur.color, borderRadius: 4 }} />
+                          <div style={{ width: `${pct}%`, height: "100%", background: lvl.color, borderRadius: 4 }} />
                         </div>
                       </div>
-                    );
-                  })()}
-                </div>
-              )}
-              <p style={{ fontSize: 11, color: T.muted, marginBottom: 10, letterSpacing: "0.08em" }}>GIFTS FOR TRENT MORRISON — Buy and give from your inventory</p>
+                    )}
+                  </div>
+                );
+              }))}
+              <p style={{ fontSize: 11, color: T.muted, marginBottom: 10, letterSpacing: "0.08em" }}>GIFTS — Buy and give from your inventory. Each gift earns relationship points with its target.</p>
               {SHOP_ITEMS.gifts.map((item: any) => {
                 const savedStock = (() => { try { return JSON.parse(localStorage.getItem("umbra_stock") || "{}"); } catch { return {}; } })();
                 const remaining = savedStock[item.id] !== undefined ? savedStock[item.id] : item.stock;
                 const inInventory = inventory.filter((i: any) => i.itemId === item.id);
+                const targetName = item.giftTarget === "cyrus_whitmore" ? "Cyrus" : "Trent";
+                const targetColor = item.giftTarget === "cyrus_whitmore" ? "#ff6f91" : T.primary;
                 return (
-                  <div key={item.id} style={{ ...card, padding: 14, marginBottom: 10 }}>
+                  <div key={item.id} style={{ ...card, padding: 14, marginBottom: 10, borderLeft: `2px solid ${targetColor}` }}>
                     <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                       <div style={{ width: 46, height: 46, borderRadius: 10, background: T.tag, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>{item.icon}</div>
                       <div style={{ flex: 1 }}>
-                        <p style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 3 }}>{item.name}</p>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                          <p style={{ fontSize: 13, fontWeight: 600, color: T.text, margin: 0 }}>{item.name}</p>
+                          <span style={{ fontSize: 9, color: targetColor, border: `1px solid ${targetColor}`, borderRadius: 8, padding: "1px 6px", letterSpacing: "0.05em" }}>FOR {targetName.toUpperCase()}</span>
+                        </div>
                         <p style={{ fontSize: 12, color: T.muted, fontStyle: "italic", marginBottom: 6, lineHeight: 1.4 }}>{item.desc}</p>
-                        <p style={{ fontSize: 11, color: T.primary, marginBottom: 8 }}>+{item.relPoints} relationship pts · ₦{item.price.toLocaleString()}</p>
+                        <p style={{ fontSize: 11, color: targetColor, marginBottom: 8 }}>+{item.relPoints} relationship pts · ₦{item.price.toLocaleString()}</p>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as any }}>
                           <button type="button" onClick={() => addToCart(item)} style={{ ...btn(true), padding: "6px 14px", fontSize: 11 }}>🛒 Buy (₦{item.price.toLocaleString()})</button>
                           {inInventory.length > 0 && (
-                            <button type="button" onClick={() => giveGiftToTrent(inInventory[0])} style={{ ...btn(false), padding: "6px 14px", fontSize: 11, borderColor: T.primary, color: T.primary }}>
-                              🎁 Give to Trent ({inInventory.length} owned)
+                            <button type="button" onClick={() => giveGiftToAffinity(inInventory[0])} style={{ ...btn(false), padding: "6px 14px", fontSize: 11, borderColor: targetColor, color: targetColor }}>
+                              🎁 Give to {targetName} ({inInventory.length} owned)
                             </button>
                           )}
                         </div>
@@ -16767,15 +16881,17 @@ export default function Umbra() {
             </div>
           )}
 
-          {/* Trent relationship badge when in his DM */}
-          {dmConvId === "trent_morrison" && uid && (() => {
-            const tl = getTrentLevel(trentRel[uid]||0);
+          {/* Affinity relationship badge when in Trent/Cyrus DM */}
+          {dmConvId && uid && (dmConvId === "trent_morrison" || dmConvId === "cyrus_whitmore") && (() => {
+            const isTrent = dmConvId === "trent_morrison";
+            const pts = isTrent ? (trentRel[uid]||0) : (cyrusRel[uid]||0);
+            const tl = isTrent ? getTrentLevel(pts) : getCyrusLevel(pts);
             return (
               <div onClick={() => { setSubPage("shop"); setShopTab("gifts"); go("university"); }} style={{ ...card, padding: "8px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderLeft: `3px solid ${tl.color}` }}>
                 <span style={{ fontSize: 18 }}>🎁</span>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: tl.color }}>Rel. Level {tl.level}: {tl.name}</span>
-                  <span style={{ fontSize: 11, color: T.muted, marginLeft: 8 }}>{trentRel[uid]||0} pts</span>
+                  <span style={{ fontSize: 11, color: T.muted, marginLeft: 8 }}>{pts} pts</span>
                 </div>
                 <span style={{ fontSize: 10, color: T.muted }}>Send Gift →</span>
               </div>
