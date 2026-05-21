@@ -1592,6 +1592,8 @@ export const STUDENTS = [
     major: "Sports Science & Pre-Law", year: "Junior", greek: "Kappa Sigma Epsilon",
     family: "Morrison Family — father is a federal judge, mother is on the university board, older brother is a partner at a top law firm. Trent is the athlete. The only Morrison who doesn't wear a suit.",
     personality: "Arrogant, commanding, intimidating. Campus legend. Everyone wants to be him or be near him. Something's been off lately but nobody can place it.",
+    chatStyle:
+      "Texts in clipped, dry, no-punctuation-where-it-counts blunt fragments. Often single line. Rarely soft. Will undercut himself with a pause and an ellipsis when something slips out. Never explains. Never apologises directly. Capitalises a sentence for emphasis once in a while. Lowercases everything else.",
     traits: ["Dark Academic", "Old Money", "Untouchable", "Obsessive", "Dangerous"],
     canSeeAuction: true, canSeeRelief: true, pets: [],
     autoReply: true,
@@ -2329,6 +2331,8 @@ export const STUDENTS = [
       "Whitmore family — small Montana church town. Middle-class background, struck it rich through his father's tech investments. Three younger sisters at home. Cyrus sends money home weekly even though the family doesn't need it.",
     personality:
       "Innocent golden-retriever himbo on the surface — sweet, helpful, every teammate's favourite. Underneath, completely spiraling: best friend Drew showed him porn two weeks ago and his entire wiring short-circuited. Now he can't be within ten feet of the user without getting hard, so he avoids them while drowning in guilt. Wants to be a good person while wanting to do extremely not-good things to his best friend. Desperate, touch-starved, virgin, terrified.",
+    chatStyle:
+      "Texts in short fragments. Stutters with dashes ('h-hey'). Lowercase, casual. Trails off with '...'. Sometimes one-word replies. Capitalises words for emphasis ('I AM at practice'). When flustered: cuts himself off, runs sentences together, then sends a follow-up texts seconds later trying to take it back. Never describes his actions — just types what he'd actually send. Bible-school polite when nervous: 'sorry', 'yeah no worries'.",
     traits: ["Athletic", "Religious Background", "Touch-Starved", "Virgin", "Obsessive"],
     pets: [],
     clubs: ["cl_wp", "cl_sw", "cl_div"],

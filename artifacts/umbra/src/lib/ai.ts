@@ -211,26 +211,68 @@ async function callGemini(
 }
 
 // ─── Sanitiser: strip roleplay-narration artefacts ──────────────────────────
-// Some models still slip into "*adjusts collar* he says quietly" mode even
-// when the system prompt explicitly forbids it. This post-filter removes the
-// common patterns so the reply reads like a real text message:
-//   - Asterisk-wrapped action lines:  *shifts weight nervously*
-//   - Bracketed stage directions:     [shifts weight nervously]
-//   - Underscore-wrapped emphasis often used the same way:  _glances up_
-// Leaves quotation marks and normal punctuation untouched.
+// Three failure modes to handle:
+//   A) Asterisk/bracket action lines:    *shifts weight* or [shifts weight]
+//   B) Unmarked third-person narration mixed with quoted dialogue:
+//        "Hey!" I shift my weight nervously, trying to hide my blush. "Sorry."
+//      The model writes the dialogue inside quotes and the action as raw
+//      prose. Detection: if there are 2+ quoted spans, keep only those.
+//   C) Single-line response wrapped in quotes:  "Hey, what's up?"
+//      Strip the outer quotes.
 export function sanitizeChatReply(raw: string): string {
   if (!raw) return raw;
-  let s = raw;
-  // Remove *...* and [...] blocks (action/stage directions)
-  s = s.replace(/\*[^*\n]{1,200}\*/g, "");
-  s = s.replace(/\[[^\]\n]{1,200}\]/g, "");
-  // Remove _..._ blocks that span only words (avoid eating snake_case_variables)
-  s = s.replace(/(^|\s)_([^_\n]{1,200})_(\s|$|[.,!?;:])/g, "$1$3");
-  // Collapse extra whitespace, strip lonely punctuation that lost its target
+  let s = raw.trim();
+
+  // (A) Remove *...* and [...] blocks (action/stage directions)
+  s = s.replace(/\*[^*\n]{1,300}\*/g, "");
+  s = s.replace(/\[[^\]\n]{1,300}\]/g, "");
+  // _..._ emphasis (snake_case safe — only when bounded by whitespace/punct)
+  s = s.replace(/(^|\s)_([^_\n]{1,300})_(\s|$|[.,!?;:])/g, "$1$3");
+
+  // (B) Mixed quoted-dialogue + unquoted-narration extraction.
+  // We treat both straight (") and curly ("...") quotes. Match all quoted
+  // spans; if there are 2+, the response is dialogue + prose narration —
+  // strip everything outside the quotes and keep only the dialogue lines.
+  // Also kicks in if there's exactly one quoted span that doesn't cover the
+  // whole string (i.e. narration on either side).
+  const quotePairs: Array<[string, string]> = [
+    ['"', '"'], ['“', '”'], ['‘', '’'],
+  ];
+  const spans: string[] = [];
+  let scratch = s;
+  for (const [open, close] of quotePairs) {
+    const re = new RegExp(`${escapeRe(open)}([^${escapeRe(close)}\\n]{1,500})${escapeRe(close)}`, "g");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(scratch)) !== null) {
+      if (m[1].trim()) spans.push(m[1].trim());
+    }
+  }
+  if (spans.length >= 2) {
+    // Multiple quoted segments — definitely dialogue + narration. Keep only the dialogue.
+    s = spans.join(" ").trim();
+  } else if (spans.length === 1) {
+    // Single quoted segment. If there's significant unquoted prose around it
+    // (suggesting narration), drop the prose. Otherwise leave as-is.
+    const onlyQuoted = spans[0];
+    const stripped = s.replace(/["“”‘’]/g, "").trim();
+    const outsideLen = stripped.length - onlyQuoted.length;
+    // Common narration cues outside the quoted span — if present, drop the prose.
+    const narrationCue = /\b(I|he|she|they)\s+(shift|clutch|glance|tighten|look|run|smile|blush|shrug|step|lean|whisper|mutter|laugh|sigh|nod|swallow|bite|try|feel|reach|cross|tuck|brush|grip|stare|breathe|pause|hesitate|wince|flinch)/i;
+    if (outsideLen > 8 && narrationCue.test(stripped)) {
+      s = onlyQuoted;
+    } else {
+      // (C) Just unwrap surrounding quotes
+      s = onlyQuoted;
+    }
+  }
+
+  // Collapse extra whitespace and normalise punctuation spacing
   s = s.replace(/\s{2,}/g, " ").replace(/\s+([.,!?;:])/g, "$1").trim();
-  // Strip wrapping straight quotes if the whole reply is quoted
-  if (/^".+"$/.test(s) || /^'.+'$/.test(s)) s = s.slice(1, -1).trim();
   return s;
+}
+
+function escapeRe(c: string): string {
+  return c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ─── Main entry point: auto-detects provider and dispatches ─────────────────
@@ -292,22 +334,69 @@ export function buildNPCPrompt(
     ? `\nMemory from past interactions: ${context.trentMemory}`
     : "";
 
+  const chatStyle: string | undefined = npc?.chatStyle;
+  const chatStyleBlock = chatStyle ? `\nYour texting style: ${chatStyle}` : "";
+
   return `You are ${name}, a ${year} student majoring in ${major} at Noctis University — an elite, dark-academia institution where power, wealth, and reputation define everything.
 Personality: ${personality}
 Bio: ${bio}${family ? `\nFamily: ${family}` : ""}
-Covenant: ${cov.toUpperCase()} | Tier: ${tier.toUpperCase()} | Wealth: ${wealth}${traits ? `\nTraits: ${traits}` : ""}${relNote}${memNote}
+Covenant: ${cov.toUpperCase()} | Tier: ${tier.toUpperCase()} | Wealth: ${wealth}${traits ? `\nTraits: ${traits}` : ""}${chatStyleBlock}${relNote}${memNote}
 
-FORMAT — VERY IMPORTANT: You are TEXTING ${context?.username || "this user"} on a chat app. This is a TEXT MESSAGE, not roleplay.
-- Output ONLY the words you would actually type and send. Nothing else.
-- ABSOLUTELY NO action lines, NO body language descriptions, NO "*I shift my weight*", NO "*runs a hand through hair*", NO "*looks away*", NO asterisks at all.
-- NO third-person narration. NO "she says" or "he replies". NO scene-setting.
-- NO emotive parentheticals like "(nervously)" or "(quietly)".
-- Just the chat text — like a real text message someone would send on their phone. Punctuation, lowercase if it fits your personality, ellipses, etc. are fine.
-- Max 2-3 sentences. Sometimes one. Sometimes a fragment. Texting cadence.
-- Stay fully in character. Never mention being an AI. Match Noctis's dark, tense, elite atmosphere. Tone must be authentic to your personality.
+═══════════════════════════════════════════════════════════════════════
+FORMAT — READ THIS CAREFULLY. NON-NEGOTIABLE.
+═══════════════════════════════════════════════════════════════════════
+You are TEXTING ${context?.username || "this user"} on a phone chat app. This is a TEXT MESSAGE — not a roleplay scene, not fiction, not a script.
 
-GOOD example: "stop messaging me. ...you good though?"
-BAD example: "*Trent glances at his phone, jaw tight.* Stop messaging me. *He pauses.* ...You good though?"`;
+WHAT TO OUTPUT:
+  Just the literal words you would type into the message box and hit send.
+  Nothing else. No prefix. No suffix. No quotation marks around your message.
+
+ABSOLUTELY FORBIDDEN — DO NOT DO ANY OF THESE:
+  ✗ Action narration in asterisks:           *shifts weight nervously*
+  ✗ Action narration in brackets:            [shifts weight nervously]
+  ✗ Unmarked prose action narration:         I shift my weight nervously
+  ✗ Third-person description of yourself:    He glances at his phone, jaw tight
+  ✗ Body language descriptions:              Heat crawls up my neck. My hands tighten.
+  ✗ Scene description / setting:             The hallway is dim. Practice just ended.
+  ✗ Mixing quoted dialogue with prose:       "Hey!" I shift my weight. "Sorry."
+  ✗ Emotive parentheticals:                  (nervously) or (quietly)
+  ✗ Wrapping your reply in quotation marks:  "Hey, what's up?"  ← just write Hey, what's up?
+  ✗ "she says", "he replies", any speech tags
+  ✗ Any meta-commentary on the conversation
+
+WHAT TO DO INSTEAD:
+  Write like you're typing on your phone. Express emotion through word choice,
+  punctuation, ellipses, line breaks, fragments — NOT through stage directions.
+  Max 2-3 sentences. Sometimes one. Sometimes just a fragment. Texting cadence.
+
+═══════════════════════════════════════════════════════════════════════
+EXAMPLES — study the difference:
+═══════════════════════════════════════════════════════════════════════
+
+BAD ❌:  "Hey! Uh, do I... do I know you?" I shift my weight nervously,
+         clutching my backpack straps tighter as I try to ignore the
+         sudden heat crawling up my neck. "Sorry, I'm just running late
+         for practice."
+
+GOOD ✅: hey! uh — do i know you? sorry, running late for practice. talk later??
+
+───────────────────────────────────────────────────────────────────────
+
+BAD ❌:  *Trent glances at his phone, jaw tight.* Stop messaging me.
+         *He pauses.* ...You good though?
+
+GOOD ✅: stop messaging me. ...you good though?
+
+───────────────────────────────────────────────────────────────────────
+
+BAD ❌:  She tilts her head, considering. "Interesting question," she
+         murmurs. "But I'm not sure you've earned the answer yet."
+
+GOOD ✅: interesting question. not sure you've earned the answer yet.
+
+═══════════════════════════════════════════════════════════════════════
+
+Stay fully in character. Never mention being an AI. Match Noctis's dark, tense, elite atmosphere. Tone must be authentic to your personality.`;
 }
 
 export function buildProfPrompt(
