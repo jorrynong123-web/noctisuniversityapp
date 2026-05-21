@@ -256,19 +256,15 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
   // ── POSTS ──────────────────────────────────────────────────────────────────
   if (seg[0] === "posts") {
     if (method === "GET" && !seg[1]) {
-      // Fetch ALL real-user posts unconditionally first (no limit). Real users are rare,
-      // so this is bounded by signups. Then fetch newest NPC posts separately. This
-      // guarantees real-user posts ALWAYS appear in the feed and are never crowded out
-      // by the 100-post limit when NPC posts pile up.
-      const [realResp, npcResp] = await Promise.all([
-        sb.from("posts").select("*").eq("is_npc", false).order("created_at", { ascending: false }),
-        sb.from("posts").select("*").eq("is_npc", true).order("created_at", { ascending: false }).limit(60),
-      ]);
-      if (realResp.error) return _apiErr(realResp.error.message);
+      // Single unified query — captures every post regardless of is_npc value
+      // (including NULL, which the previous .eq() pair was silently filtering out).
+      // Limit raised to 300 so the feed has plenty of headroom; the user-post
+      // backup in localStorage covers anything that ages out beyond that.
+      const { data: rawPosts, error: pErr } = await sb.from("posts").select("*").order("created_at", { ascending: false }).limit(300);
+      if (pErr) return _apiErr(pErr.message);
       const shape = (p: any) => ({ id: p.id, userId: p.user_id, username: p.username, content: p.content, image: p.image, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes || 0, skulls: p.skulls || 0, flames: p.flames || 0, isNpc: p.is_npc, createdAt: p.created_at });
-      const realPosts = (realResp.data || []).map(shape);
-      const npcPosts = (npcResp.data || []).map(shape);
-      let posts = [...realPosts, ...npcPosts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      let posts = (rawPosts || []).map(shape);
+      const npcPosts = posts.filter((p: any) => p.isNpc === true);
       const creds = getStoredCreds();
       // Generate fresh NPC posts ONLY when the feed is genuinely empty.
       // Previous logic triggered on every refresh when recentNpcCount < 2, which
@@ -375,18 +371,19 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
   // ── AUTH ───────────────────────────────────────────────────────────────────
   if (seg[0] === "auth") {
     if (seg[1] === "signup" && method === "POST") {
+      const t0 = Date.now();
       const { username, password, profile = {} } = body as any;
-      const { data: existing } = await sb.from("profiles").select("id").eq("username", username).maybeSingle();
+      // Cheap NPC-username check (synchronous, in-memory). DON'T do a Supabase
+      // SELECT here for the duplicate check — the client already does a debounced
+      // live check on the typing screen, and signUp() will fail with a clean
+      // error if a duplicate slipped through. Saves one round-trip on the hot path.
       const npcTaken = (Object.values(ACCTS) as any[]).some((u: any) => u.un?.toLowerCase() === (username as string)?.toLowerCase());
-      if (existing || npcTaken) {
+      if (npcTaken) {
         const suffix = Math.floor(Math.random() * 900) + 100;
-        const suggestion = `${username}_${suffix}`;
-        return new Response(JSON.stringify({ error: "Username already taken.", suggestion }), { status: 409, headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ error: "Username already taken.", suggestion: `${username}_${suffix}` }), { status: 409, headers: { "Content-Type": "application/json" } });
       }
       const fakeEmail = `${(username as string).toLowerCase().replace(/[^a-z0-9]/g, "_")}@noctis.local`;
       let userId: string | undefined;
-      // Try signUp first. If the auth user already exists (from a previous failed attempt),
-      // signUp returns user:null with no error — fall back to signIn to recover the id.
       const { data: authData, error: authErr } = await sb.auth.signUp({ email: fakeEmail, password: password as string });
       if (authErr) {
         console.error("[signup] signUp error:", authErr.message);
@@ -396,24 +393,26 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
         userId = authData.user.id;
       } else {
         // Auth user already exists — recover by signing in with same credentials
-        console.warn("[signup] signUp returned no user (email already registered) — attempting signIn recovery");
         const { data: siData, error: siErr } = await sb.auth.signInWithPassword({ email: fakeEmail, password: password as string });
         if (siErr || !siData.user?.id) {
-          console.error("[signup] recovery signIn failed:", siErr?.message);
           return _apiErr("Username is taken or credentials mismatch. Please try a different username.", 409);
         }
         userId = siData.user.id;
       }
       const prof: any = profile || {};
       const profileRow = { id: userId, username, pic: prof.pic || "🌑", bio: prof.bio || "", cov: prof.covenant || prof.cov || "silk", tier: prof.tier || "commoner", major: prof.major || "Undeclared", year: prof.year || "Freshman", wealth: prof.wealth || "Self-Made", rep: prof.rep || "New Arrival", followers: 0, following: 0, xp: 0, traits: [] };
-      // Use upsert so re-attempts (e.g. previous profile-save failure) don't throw duplicate-key errors
-      const { error: profErr } = await sb.from("profiles").upsert(profileRow, { onConflict: "id" });
-      if (profErr) {
-        console.error("[signup] profile upsert error:", profErr.message);
-        return _apiErr(`Profile save failed: ${profErr.message}`, 500);
+      // Run profile + wallet upserts in parallel — they're independent inserts.
+      // We MUST await profile (it's the authoritative existence record), but we
+      // can fire the wallet upsert at the same time so they overlap on the wire.
+      const [profResp] = await Promise.all([
+        sb.from("profiles").upsert(profileRow, { onConflict: "id" }),
+        sb.from("wallets").upsert({ user_id: userId, balance: 5000 }, { onConflict: "user_id" }).then(() => null, () => null),
+      ]);
+      if (profResp.error) {
+        console.error("[signup] profile upsert error:", profResp.error.message);
+        return _apiErr(`Profile save failed: ${profResp.error.message}`, 500);
       }
-      try { await sb.from("wallets").upsert({ user_id: userId, balance: 5000 }, { onConflict: "user_id" }); } catch {}
-      console.log("[signup] success, userId:", userId);
+      console.log(`[signup] success in ${Date.now() - t0}ms, userId:`, userId);
       return _apiOk({ token: "supabase", user: { id: userId, username, profile: { ...profileRow, covenant: profileRow.cov } } });
     }
     if (seg[1] === "login" && method === "POST") {
