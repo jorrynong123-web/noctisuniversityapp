@@ -253,7 +253,7 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       if (posts.length < 8 || recentNpcCount < 2) {
         const aiPosts = await _generateNPCPosts(creds ?? undefined);
         for (const p of aiPosts) {
-          await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }).catch(() => {});
+          try { await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }); } catch {}
           // Schedule NPC comments on each generated post (non-blocking, staggered delays)
           if (creds) setTimeout(() => _generateNPCComments(p.id, p.content, p.user_id, creds).catch(() => {}), 5000 + Math.random() * 25000);
         }
@@ -308,7 +308,7 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
           parent_id: b.parentId || null,
           created_at: new Date().toISOString(),
         };
-        await sb.from("comments").insert(comment).catch(() => {});
+        try { await sb.from("comments").insert(comment); } catch {}
         return _apiOk({ comment: { ...comment, userId: comment.user_id, createdAt: comment.created_at } });
       }
       if (method === "DELETE" && seg[3]) {
@@ -387,7 +387,7 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
         console.error("[signup] profile upsert error:", profErr.message);
         return _apiErr(`Profile save failed: ${profErr.message}`, 500);
       }
-      await sb.from("wallets").upsert({ user_id: userId, balance: 5000 }, { onConflict: "user_id" }).catch(() => {});
+      try { await sb.from("wallets").upsert({ user_id: userId, balance: 5000 }, { onConflict: "user_id" }); } catch {}
       console.log("[signup] success, userId:", userId);
       return _apiOk({ token: "supabase", user: { id: userId, username, profile: { ...profileRow, covenant: profileRow.cov } } });
     }
@@ -413,8 +413,8 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
       // If profile doesn't exist yet (e.g. signup failed mid-way), auto-create it now
       if (!rawProf) {
         const fallbackRow = { id: userId, username, pic: "🌑", bio: "", cov: "silk", tier: "commoner", major: "Undeclared", year: "Freshman", wealth: "Self-Made", rep: "New Arrival", followers: 0, following: 0, xp: 0, traits: [] };
-        await sb.from("profiles").insert(fallbackRow).catch(() => {});
-        await sb.from("wallets").insert({ user_id: userId, balance: 5000 }).catch(() => {});
+        try { await sb.from("profiles").insert(fallbackRow); } catch {}
+        try { await sb.from("wallets").insert({ user_id: userId, balance: 5000 }); } catch {}
         rawProf = fallbackRow as any;
       }
       // Map snake_case Supabase columns → camelCase fields the client expects
@@ -760,7 +760,7 @@ async function _generateNPCComments(
       created_at: new Date(Date.now() + Math.floor(Math.random() * 1800000)).toISOString(),
     };
     if (supabase) {
-      await supabase.from("comments").insert(comment).catch(() => {});
+      try { await supabase.from("comments").insert(comment); } catch {}
     } else {
       const key = `umbra_comments_${postId}`;
       _lsSet(key, [..._ls<any[]>(key, []), comment]);
@@ -1701,6 +1701,9 @@ export default function Umbra() {
   const [apexScore, setApexScore] = useState(0);
   const [apexStep, setApexStep] = useState(0);
   const [newUN, setNewUN] = useState("");
+  // Live username availability check (runs as the user types on the "claim your name" step)
+  const [unStatus, setUnStatus] = useState<"idle" | "checking" | "available" | "taken" | "tooshort" | "invalid">("idle");
+  const [unSuggestion, setUnSuggestion] = useState<string>("");
   const [newPW, setNewPW] = useState("");
   const [newPWConfirm, setNewPWConfirm] = useState("");
   const [newGender, setNewGender] = useState("");
@@ -1722,6 +1725,44 @@ export default function Umbra() {
   const [regSubmitting, setRegSubmitting] = useState(false);
   const [regError, setRegError] = useState("");
   const [pendingTags, setPendingTags] = useState<string[]>([]);
+
+  // ── Live username availability check (debounced 400ms) ──────────────────────
+  // Fires whenever `newUN` changes on the signup screen. Checks both NPC names
+  // (offline) and real users in Supabase. Sets `unStatus` for inline UI feedback.
+  useEffect(() => {
+    const raw = newUN.trim();
+    if (!raw) { setUnStatus("idle"); setUnSuggestion(""); return; }
+    if (raw.length < 2) { setUnStatus("tooshort"); setUnSuggestion(""); return; }
+    if (!/^[a-zA-Z0-9 _.-]+$/.test(raw)) { setUnStatus("invalid"); setUnSuggestion(""); return; }
+    const cleaned = raw.toLowerCase().replace(/\s+/g, "_");
+    setUnStatus("checking");
+    setUnSuggestion("");
+    const handle = setTimeout(async () => {
+      // 1. Check NPC accounts (synchronous, in-memory)
+      const npcTaken = (Object.values(ACCTS) as any[]).some(
+        (u: any) => u.un?.toLowerCase() === raw.toLowerCase() || u.un?.toLowerCase().replace(/\s+/g, "_") === cleaned
+      );
+      if (npcTaken) {
+        setUnStatus("taken");
+        setUnSuggestion(`${cleaned}_${Math.floor(Math.random() * 900) + 100}`);
+        return;
+      }
+      // 2. Check Supabase real users
+      if (supabase) {
+        try {
+          const { data } = await supabase.from("profiles").select("id").eq("username", cleaned).maybeSingle();
+          if (data) {
+            setUnStatus("taken");
+            setUnSuggestion(`${cleaned}_${Math.floor(Math.random() * 900) + 100}`);
+            return;
+          }
+        } catch {}
+      }
+      setUnStatus("available");
+      setUnSuggestion("");
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [newUN]);
 
   // Login
   const [lid, setLid] = useState("");
@@ -5963,19 +6004,51 @@ export default function Umbra() {
                     <p style={{ ...lbl, marginBottom: 6 }}>CHOOSE YOUR NAME</p>
                     <input value={newUN} onChange={(e) => setNewUN(e.target.value)}
                       placeholder="e.g. Lysander Vane"
-                      style={{ ...inp }} />
+                      style={{ ...inp, borderColor: unStatus === "taken" || unStatus === "invalid" ? "#a04040" : unStatus === "available" ? "#4d8a4d" : (inp as any).borderColor || "#362e1e" }} />
+                    {unStatus === "checking" && (
+                      <p style={{ fontSize: 11, color: "#9a8868", marginTop: 6, fontFamily: "'Cormorant Garamond',serif", fontStyle: "italic" }}>Checking availability…</p>
+                    )}
+                    {unStatus === "available" && (
+                      <p style={{ fontSize: 11, color: "#7ac47a", marginTop: 6, fontFamily: "'Cormorant Garamond',serif" }}>✓ This name is available.</p>
+                    )}
+                    {unStatus === "taken" && (
+                      <p style={{ fontSize: 11, color: "#e87878", marginTop: 6, fontFamily: "'Cormorant Garamond',serif" }}>
+                        ✗ Already claimed.{" "}
+                        {unSuggestion && (
+                          <button type="button" onClick={() => setNewUN(unSuggestion)}
+                            style={{ background: "none", border: "none", color: "#d4af37", textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", fontSize: 11, padding: 0 }}>
+                            Try {unSuggestion}?
+                          </button>
+                        )}
+                      </p>
+                    )}
+                    {unStatus === "tooshort" && (
+                      <p style={{ fontSize: 11, color: "#9a8868", marginTop: 6, fontFamily: "'Cormorant Garamond',serif", fontStyle: "italic" }}>Name must be at least 2 characters.</p>
+                    )}
+                    {unStatus === "invalid" && (
+                      <p style={{ fontSize: 11, color: "#e87878", marginTop: 6, fontFamily: "'Cormorant Garamond',serif" }}>Only letters, numbers, spaces, dots, dashes and underscores allowed.</p>
+                    )}
                   </div>
                   <div>
                     <p style={{ ...lbl, marginBottom: 6 }}>SET PASSWORD</p>
                     <input type="password" value={newPW} onChange={(e) => setNewPW(e.target.value)}
                       placeholder="Keep it secret, keep it safe"
-                      style={{ ...inp }} />
+                      style={{ ...inp, borderColor: newPW && newPW.length < 6 ? "#a04040" : (inp as any).borderColor || "#362e1e" }} />
+                    {newPW && newPW.length < 6 && (
+                      <p style={{ fontSize: 11, color: "#e87878", marginTop: 6, fontFamily: "'Cormorant Garamond',serif" }}>Password must be at least 6 characters.</p>
+                    )}
                   </div>
                   <div>
                     <p style={{ ...lbl, marginBottom: 6 }}>CONFIRM PASSWORD</p>
                     <input type="password" value={newPWConfirm} onChange={(e) => setNewPWConfirm(e.target.value)}
                       placeholder="Repeat your password"
-                      style={{ ...inp }} />
+                      style={{ ...inp, borderColor: newPWConfirm && newPWConfirm !== newPW ? "#a04040" : newPWConfirm && newPWConfirm === newPW ? "#4d8a4d" : (inp as any).borderColor || "#362e1e" }} />
+                    {newPWConfirm && newPWConfirm !== newPW && (
+                      <p style={{ fontSize: 11, color: "#e87878", marginTop: 6, fontFamily: "'Cormorant Garamond',serif" }}>Passwords don't match.</p>
+                    )}
+                    {newPWConfirm && newPWConfirm === newPW && newPW.length >= 6 && (
+                      <p style={{ fontSize: 11, color: "#7ac47a", marginTop: 6, fontFamily: "'Cormorant Garamond',serif" }}>✓ Passwords match.</p>
+                    )}
                   </div>
                   <div>
                     <p style={{ ...lbl, marginBottom: 8 }}>GENDER</p>
