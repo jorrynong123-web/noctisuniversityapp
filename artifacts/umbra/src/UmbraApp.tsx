@@ -2163,15 +2163,16 @@ export default function Umbra() {
     if (t === "ascendant") return 100000;
     return 50000; // merit / commoner / pet / anything else
   };
-  // Safety net: if regSubmitting somehow stays true for > 10s (a hung promise,
-  // a runaway state, anything), force-reset it so the button isn't stuck. The
-  // user can click again and try.
+  // Safety net: if regSubmitting somehow stays true for > 35s (a hung promise,
+  // a runaway state, anything), force-reset it so the button isn't stuck. Set
+  // above the signup timeout (30s) so a slow but valid Supabase signup is never
+  // killed mid-flight by the safety reset.
   useEffect(() => {
     if (!regSubmitting) return;
     const t = setTimeout(() => {
-      console.warn("[safety] regSubmitting stuck >10s, force-resetting");
+      console.warn("[safety] regSubmitting stuck >35s, force-resetting");
       setRegSubmitting(false);
-    }, 10000);
+    }, 35000);
     return () => clearTimeout(t);
   }, [regSubmitting]);
 
@@ -4896,8 +4897,10 @@ export default function Umbra() {
       canSeeRelief: tier === "apex" || tier === "faculty",
     };
 
-    // Try Supabase signup with a hard 6s race. If it doesn't win, we proceed
-    // with a local account so the user is never blocked from entering the app.
+    // Wait for Supabase signup with a generous 30s ceiling. Cross-device sign-in
+    // requires the account to actually exist on the server, so we ONLY fall back
+    // to a local account if Supabase truly fails or hits the 30s wall. Most
+    // signups complete in 2-5 seconds; 30s only triggers on real outages.
     let serverResult: { user: any; token: string } | null = null;
     let usernameTakenSuggestion: string | null = null;
     try {
@@ -4908,7 +4911,7 @@ export default function Umbra() {
       }).then(async (res) => ({ res, data: await res.json().catch(() => ({})) }));
       const winner = await Promise.race([
         signupP,
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 30000)),
       ]);
       if (winner) {
         const { res, data } = winner as any;
@@ -4920,7 +4923,7 @@ export default function Umbra() {
           console.warn("[finishReg] backend non-OK, falling back to local:", res.status, data?.error);
         }
       } else {
-        console.warn("[finishReg] backend timed out (6s), falling back to local account");
+        console.warn("[finishReg] backend timed out (30s), falling back to local account — background sync will retry");
       }
     } catch (err: any) {
       console.warn("[finishReg] backend threw, falling back to local:", err?.message || err);
@@ -6747,7 +6750,7 @@ export default function Umbra() {
                   {regSubmitting ? "ENTERING…" : "ENTER NOCTIS"}
                 </button>
                 <p style={{ fontSize: 11, color: "#6a5840", textAlign: "center", marginTop: 8, fontFamily: "'IM Fell English',serif", fontStyle: "italic" }}>
-                  {regSubmitting ? "Creating your account… (timing out at 25 s if Supabase is slow)" : "The shadows await your arrival."}
+                  {regSubmitting ? "Creating your account on the server… (can take up to 30 s)" : "The shadows await your arrival."}
                 </p>
                 {/* Emergency escape hatch: if the user is stuck on ENTERING they can
                     bail out manually and try again with a different username, or use
