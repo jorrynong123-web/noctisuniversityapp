@@ -35,6 +35,7 @@ export const MAJORS_LIST = [
     careers: ["Corporate Counsel", "Senator", "Federal Judge", "CEO"],
     gpaMin: 3.6,
     apexOnly: false,
+    clubs: ["cl_law"],
   },
   {
     id: "intl_relations",
@@ -48,6 +49,7 @@ export const MAJORS_LIST = [
     careers: ["Ambassador", "Intelligence Director", "Secretary of State", "UN Official"],
     gpaMin: 3.5,
     apexOnly: false,
+    clubs: ["cl_law"],
   },
   {
     id: "econ_finance",
@@ -61,6 +63,7 @@ export const MAJORS_LIST = [
     careers: ["Investment Banker", "Hedge Fund Manager", "CFO", "Central Banker"],
     gpaMin: 3.4,
     apexOnly: false,
+    clubs: ["cl_chess"],
   },
   {
     id: "poli_sci",
@@ -74,6 +77,7 @@ export const MAJORS_LIST = [
     careers: ["Politician", "Political Strategist", "Lobbyist", "Diplomat"],
     gpaMin: 3.2,
     apexOnly: false,
+    clubs: ["cl_law"],
   },
   {
     id: "medicine",
@@ -87,6 +91,7 @@ export const MAJORS_LIST = [
     careers: ["Surgeon", "Researcher", "Clinical Director", "Pharmaceutical Exec"],
     gpaMin: 3.8,
     apexOnly: false,
+    clubs: ["cl_chess"],
   },
   {
     id: "comp_sci",
@@ -100,6 +105,7 @@ export const MAJORS_LIST = [
     careers: ["AI Director", "CTO", "Intelligence Analyst", "Tech Founder"],
     gpaMin: 3.5,
     apexOnly: false,
+    clubs: ["cl_chess"],
   },
   {
     id: "psychology",
@@ -113,6 +119,7 @@ export const MAJORS_LIST = [
     careers: ["Clinical Director", "Intelligence Officer", "Behavioral Consultant", "Academic"],
     gpaMin: 3.3,
     apexOnly: false,
+    clubs: ["cl_chess"],
   },
   {
     id: "fine_arts",
@@ -126,6 +133,7 @@ export const MAJORS_LIST = [
     careers: ["Gallery Director", "Artist", "Cultural Diplomat", "Auction House Director"],
     gpaMin: 3.0,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   {
     id: "engineering",
@@ -139,6 +147,7 @@ export const MAJORS_LIST = [
     careers: ["Defense Contractor", "Infrastructure Director", "Military Engineer", "Tech Executive"],
     gpaMin: 3.3,
     apexOnly: false,
+    clubs: ["cl_fen"],
   },
   {
     id: "apex_leadership",
@@ -152,6 +161,7 @@ export const MAJORS_LIST = [
     careers: ["Heads of State", "Intelligence Directors", "Billionaire Founders", "Uncategorized"],
     gpaMin: 3.9,
     apexOnly: true,
+    clubs: ["cl_law"],
   },
   {
     id: "literature",
@@ -165,6 +175,7 @@ export const MAJORS_LIST = [
     careers: ["Editor-in-Chief", "Cultural Critic", "Intelligence Writer", "Academic"],
     gpaMin: 3.1,
     apexOnly: false,
+    clubs: ["cl_chess"],
   },
   {
     id: "english_lit",
@@ -178,6 +189,7 @@ export const MAJORS_LIST = [
     careers: ["Author", "Literary Editor", "Cultural Strategist", "Academic", "Critic"],
     gpaMin: 3.2,
     apexOnly: false,
+    clubs: ["cl_chess"],
   },
   {
     id: "data_science",
@@ -191,6 +203,7 @@ export const MAJORS_LIST = [
     careers: ["Data Director", "Intelligence Analyst", "Quant Strategist", "National Security"],
     gpaMin: 3.4,
     apexOnly: false,
+    clubs: ["cl_chess"],
   },
   {
     id: "military_strategy",
@@ -204,6 +217,7 @@ export const MAJORS_LIST = [
     careers: ["General Officer", "Defense Secretary", "Intelligence Director", "Private Security CEO"],
     gpaMin: 3.2,
     apexOnly: false,
+    clubs: ["cl_fen"],
   },
   {
     id: "media_power",
@@ -217,6 +231,7 @@ export const MAJORS_LIST = [
     careers: ["Media Executive", "Political Strategist", "PR Director", "Journalist"],
     gpaMin: 3.0,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   {
     id: "philosophy",
@@ -230,6 +245,7 @@ export const MAJORS_LIST = [
     careers: ["Academic", "Legal Theorist", "Political Philosopher", "Intelligence Ethicist"],
     gpaMin: 3.0,
     apexOnly: false,
+    clubs: ["cl_chess"],
   },
   // ── FILM & TELEVISION ──
   {
@@ -244,6 +260,7 @@ export const MAJORS_LIST = [
     careers: ["Film Actor", "Theatre Director", "Performance Coach", "Casting Director"],
     gpaMin: 3.0,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   {
     id: "screenwriting",
@@ -257,6 +274,7 @@ export const MAJORS_LIST = [
     careers: ["Film Screenwriter", "TV Writer", "Story Editor", "Showrunner"],
     gpaMin: 3.1,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   {
     id: "film_direction",
@@ -270,6 +288,7 @@ export const MAJORS_LIST = [
     careers: ["Film Director", "Commercial Director", "Showrunner", "Creative Director"],
     gpaMin: 3.2,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   {
     id: "cinematography",
@@ -283,6 +302,7 @@ export const MAJORS_LIST = [
     careers: ["Director of Photography", "Camera Operator", "Colorist", "Visual Effects Supervisor"],
     gpaMin: 3.0,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   {
     id: "theatre_arts",
@@ -296,6 +316,7 @@ export const MAJORS_LIST = [
     careers: ["Stage Director", "Playwright", "Theatre Producer", "Drama Coach"],
     gpaMin: 2.9,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   {
     id: "music_performance",
@@ -309,6 +330,7 @@ export const MAJORS_LIST = [
     careers: ["Concert Musician", "Composer", "Music Director", "Session Artist"],
     gpaMin: 3.2,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   // ── ARCHITECTURE ──
   {
@@ -323,6 +345,7 @@ export const MAJORS_LIST = [
     careers: ["Licensed Architect", "Urban Planner", "Construction Director", "Development Executive"],
     gpaMin: 3.3,
     apexOnly: false,
+    clubs: ["cl_law"],
   },
   {
     id: "interior_design",
@@ -336,6 +359,7 @@ export const MAJORS_LIST = [
     careers: ["Interior Architect", "Hospitality Designer", "Set Designer", "Luxury Brand Designer"],
     gpaMin: 3.0,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   {
     id: "urban_architecture",
@@ -349,6 +373,7 @@ export const MAJORS_LIST = [
     careers: ["Urban Planner", "City Architect", "Real Estate Developer", "Government Advisor"],
     gpaMin: 3.4,
     apexOnly: false,
+    clubs: ["cl_law"],
   },
   {
     id: "race_track_arch",
@@ -362,6 +387,7 @@ export const MAJORS_LIST = [
     careers: ["Circuit Designer", "Motorsport Facility Architect", "Sports Venue Engineer", "Event Infrastructure Lead"],
     gpaMin: 3.2,
     apexOnly: false,
+    clubs: ["cl_fen"],
   },
   {
     id: "landscape_architecture",
@@ -375,6 +401,7 @@ export const MAJORS_LIST = [
     careers: ["Landscape Architect", "Park Designer", "Estate Grounds Designer", "Environmental Planner"],
     gpaMin: 3.0,
     apexOnly: false,
+    clubs: ["cl_art"],
   },
   // ── MILITARY ──
   {
@@ -389,6 +416,7 @@ export const MAJORS_LIST = [
     careers: ["Military Officer", "Intelligence Analyst", "Strategic Consultant", "Defense Contractor"],
     gpaMin: 3.1,
     apexOnly: false,
+    clubs: ["cl_fen"],
   },
 ];
 
@@ -430,6 +458,7 @@ export const STUDENTS = [
     personality:
       "Coldly precise. Never raises her voice. Everything she does is a proof — she already knows the answer before you begin the problem.",
     pets: ["pet_001", "pet_002", "pet_003"],
+    clubs: ["cl_chess", "cl_inv", "cl_mar"],
   },
   {
     id: "vii_imperator",
@@ -462,6 +491,7 @@ export const STUDENTS = [
     family: "Unknown. All records sealed. The name Imperator appears nowhere in public record — and everywhere in consequence.",
     personality: "Omniscient. Patient. Architects situations years in advance. Every conversation is a gambit. You are always two moves behind.",
     pets: ["pet_004"],
+    clubs: ["cl_chess", "cl_law", "cl_syncsw"],
   },
   {
     id: "sebastian_blackwood",
@@ -494,6 +524,7 @@ export const STUDENTS = [
     personality:
       "Deliberate. Speaks rarely, means everything. Uses silence like a weapon.",
     pets: ["pet_005"],
+    clubs: ["cl_law", "cl_deb", "cl_mar"],
   },
   {
     id: "cordelia_vane",
@@ -527,6 +558,7 @@ export const STUDENTS = [
     personality:
       "Effortlessly cruel. Smiles while delivering devastation. Never apologizes.",
     pets: ["pet_006", "pet_007"],
+    clubs: ["cl_law", "cl_deb", "cl_phil"],
   },
   {
     id: "dorian_ashford",
@@ -560,6 +592,7 @@ export const STUDENTS = [
     personality:
       "Magnetic and calculating. Makes everyone feel chosen. They are not.",
     pets: ["pet_008"],
+    clubs: ["cl_law", "cl_deb", "cl_equ"],
   },
   {
     id: "isadora_mercer",
@@ -590,6 +623,7 @@ export const STUDENTS = [
       "Mercer — tech dynasty. Father built three surveillance companies. Isadora inherited both the wealth and the philosophy.",
     personality:
       "Absolutely still. Sees everything. Comments on nothing until the moment it matters most.",
+    clubs: ["cl_inv", "cl_chess", "cl_syncsw"],
   },
   // ── ASCENDANT ──
   {
@@ -621,6 +655,7 @@ export const STUDENTS = [
       "Sterling — father is a self-made hedge fund billionaire. First generation NU. Desperate to prove legacy.",
     personality:
       "Effortful perfection. Competitive in a way that seems casual. Never as secure as she looks.",
+    clubs: ["cl_inv"],
   },
   {
     id: "marcus_vale",
@@ -651,6 +686,7 @@ export const STUDENTS = [
       "Vale — five generations of military officers. Father is a general. Marcus attends NU on a combination of athletic scholarship and family connection.",
     personality:
       "Economical with words and trust. Loyalty is absolute once earned. Has a code that even Noctis hasn't fully broken.",
+    clubs: ["cl_law", "cl_deb", "cl_fen"],
   },
   {
     id: "remy_noire",
@@ -681,6 +717,7 @@ export const STUDENTS = [
       "Noire — no inherited wealth. Remy won a full Shadows Covenant scholarship. Built a profitable information brokering operation by second year.",
     personality:
       "Unsettling calm. Never reacts. You only find out he noticed something when it's already too late.",
+    clubs: ["cl_inv", "cl_chess", "cl_phil"],
   },
   {
     id: "isolde_crane",
@@ -711,6 +748,7 @@ export const STUDENTS = [
       "Crane — fashion dynasty, European branches. Isolde is the first to attend NU. Considers herself a social experiment.",
     personality:
       "Deeply observant. Weaponizes aesthetic. Creates situations for the artistic value of watching them unfold.",
+    clubs: ["cl_art", "cl_phil", "cl_writ"],
   },
   {
     id: "felix_harrow",
@@ -741,6 +779,7 @@ export const STUDENTS = [
       "Harrow — shipping magnate family. Father donated the Harrow Wing of Blackwell. Felix leverages the family name aggressively.",
     personality:
       "Aggressively warm. Remembers everything about everyone. You feel seen — which is exactly the point.",
+    clubs: ["cl_deb", "cl_law"],
   },
   {
     id: "lyra_dusk",
@@ -771,6 +810,7 @@ export const STUDENTS = [
       "Dusk — aristocratic European family with unclear origins. Wealth is old and largely untraceable. Lyra speaks four languages and reveals none of them voluntarily.",
     personality:
       "Moves through rooms without being remembered. Collects information as a reflex. Genuinely enjoys puzzles.",
+    clubs: ["cl_chess"],
   },
   // ── MERIT ──
   {
@@ -801,6 +841,7 @@ export const STUDENTS = [
       "Hart — working class. Mother is a schoolteacher. Elena won the most competitive merit scholarship in the university's history.",
     personality:
       "Hyper-observant. Processes everything through literature. Quietly furious about the world she's been placed in.",
+    clubs: ["cl_writ", "cl_phil"],
   },
   {
     id: "noah_park",
@@ -830,6 +871,7 @@ export const STUDENTS = [
       "Park — immigrant family, father works construction, mother in healthcare. Noah's scholarship is the family's entire hope. He knows it.",
     personality:
       "Methodical and contained. Codes to survive academically and emotionally. Has not told his parents what Noctis is really like.",
+    clubs: ["cl_inv"],
   },
   {
     id: "miriam_cross",
@@ -859,6 +901,7 @@ export const STUDENTS = [
       "Cross — father is a public defender. Miriam grew up watching systems fail people. NU is both a betrayal and a weapon she intends to use.",
     personality:
       "Direct and relentless. The only Merit student who openly argues with Apex students. Has not been punished yet. That terrifies her.",
+    clubs: ["cl_law", "cl_deb"],
   },
   {
     id: "callum_reed",
@@ -888,6 +931,7 @@ export const STUDENTS = [
       "Reed — rural background, father is a farmer. Callum holds the national junior track record. The scholarship is his only path.",
     personality:
       "Quiet and observant. Missed nothing in the first year. Said nothing. Is still deciding what to do with what he knows.",
+    clubs: ["cl_law", "cl_deb", "cl_sw"],
   },
   {
     id: "selene_grey",
@@ -917,6 +961,7 @@ export const STUDENTS = [
       "Grey — academic family. Parents are both professors at a public university. They believe Noctis is simply a prestigious school.",
     personality:
       "Deeply analytical. Cannot stop observing. Has documented everything she has witnessed in encrypted files she does not fully know what to do with.",
+    clubs: ["cl_phil", "cl_writ"],
   },
   // ── PETS ──
   {
@@ -947,6 +992,7 @@ export const STUDENTS = [
     badge: "🔒 PET",
     bColor: "#8b0000",
     cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_002",
@@ -976,6 +1022,7 @@ export const STUDENTS = [
     badge: "🔒 PET",
     bColor: "#8b0000",
     cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_003",
@@ -1005,6 +1052,7 @@ export const STUDENTS = [
     badge: "🔒 PET",
     bColor: "#8b0000",
     cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_004",
@@ -1034,6 +1082,7 @@ export const STUDENTS = [
     badge: "🔒 PET",
     bColor: "#8b0000",
     cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_005",
@@ -1063,6 +1112,7 @@ export const STUDENTS = [
     badge: "🔒 PET",
     bColor: "#8b0000",
     cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_006",
@@ -1092,6 +1142,7 @@ export const STUDENTS = [
     badge: "🔒 PET",
     bColor: "#8b0000",
     cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_007",
@@ -1121,6 +1172,7 @@ export const STUDENTS = [
     badge: "🔒 PET",
     bColor: "#8b0000",
     cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_008",
@@ -1150,6 +1202,7 @@ export const STUDENTS = [
     badge: "🔒 PET",
     bColor: "#8b0000",
     cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "relief_001",
@@ -1172,6 +1225,9 @@ export const STUDENTS = [
     badge: "⬜ RELIEF",
     bColor: "#4a7a9b",
     cover: "🏥",
+    personality:
+      "A relief unit, not a student. Compliant by design. Speaks only when prompted, with exactly the phrasing it was trained to use. There is no self underneath — and that is the point.",
+    clubs: ["cl_phil"],
   },
   // ── ADDITIONAL APEX ──
   {
@@ -1204,6 +1260,7 @@ export const STUDENTS = [
     family: "Cross Industries — oil and private equity. Four generations at NU. Nathaniel is expected to run for office within a decade.",
     personality: "Quiet authority. Delegates cruelty. Genuinely believes everyone at Noctis is exactly where they deserve to be.",
     pets: [],
+    clubs: ["cl_deb", "cl_law", "cl_inv"],
   },
   {
     id: "elara_saint",
@@ -1212,7 +1269,7 @@ export const STUDENTS = [
     pw: "saint2024",
     cov: "shadows",
     tier: "apex",
-    pic: "🌒",
+    pic: "✨",
     bio: "Information is the only real currency.\nEveryone here is a data point.",
     followers: 2900,
     following: 5,
@@ -1232,6 +1289,7 @@ export const STUDENTS = [
     greek: "None",
     family: "Saint — father runs a private intelligence firm. Elara grew up reading dossiers instead of bedtime stories.",
     personality: "Unsettlingly precise. Can tell someone's emotional state from their typing speed. Rarely wrong.",
+    clubs: ["cl_inv", "cl_chess", "cl_equ"],
   },
   // ── ADDITIONAL ASCENDANT ──
   {
@@ -1241,7 +1299,7 @@ export const STUDENTS = [
     pw: "wren2024",
     cov: "blades",
     tier: "ascendant",
-    pic: "🗡️",
+    pic: "🦅",
     bio: "Combat scholarship. Blades Covenant.\nStrength isn't cruelty — but at Noctis, it helps.",
     followers: 1600,
     following: 280,
@@ -1261,6 +1319,7 @@ export const STUDENTS = [
     greek: "Kappa Sigma Epsilon",
     family: "Wren — professional military family. Tobias chose NU over West Point after a Blades Covenant recruiter appeared at his regional championship.",
     personality: "Direct and uncomfortable with dishonesty. The only ascendant who visibly struggled with the Pet Auction. Still participated.",
+    clubs: ["cl_law", "cl_deb"],
   },
   {
     id: "celeste_noir",
@@ -1289,6 +1348,7 @@ export const STUDENTS = [
     greek: "Kappa Alpha Zeta",
     family: "Noir — European fashion dynasty. Celeste's line already has its own label. She treats NU as networking, not education.",
     personality: "Warm surface, calculating core. Has weaponized aesthetics to ruin two people this semester. Both thanked her afterwards.",
+    clubs: ["cl_film", "cl_art", "cl_chess"],
   },
   {
     id: "dorian_voss",
@@ -1297,7 +1357,7 @@ export const STUDENTS = [
     pw: "voss2024",
     cov: "crowns",
     tier: "ascendant",
-    pic: "🎩",
+    pic: "🍷",
     bio: "Heir to the Voss media empire.\nI tell people what to think. It's more elegant than force.",
     followers: 1900,
     following: 160,
@@ -1317,6 +1377,7 @@ export const STUDENTS = [
     greek: "Alpha Phi Omega",
     family: "Voss — media empire across three continents. Dorian will inherit control of six major news outlets. He already writes strategy memos for two of them.",
     personality: "Rhetorically brilliant. Genuinely believes objective truth is a myth and information should be controlled by those qualified to use it.",
+    clubs: ["cl_film", "cl_art"],
   },
   // ── ADDITIONAL MERIT ──
   {
@@ -1345,6 +1406,7 @@ export const STUDENTS = [
     greek: "None",
     family: "Sol — working class. Anya's father is a painter; she grew up mixing colors. NU is the most frightening and beautiful thing she's ever seen.",
     personality: "Quietly observant. Processes Noctis through her art, which is becoming progressively darker. Three professors have asked to buy pieces.",
+    clubs: ["cl_art"],
   },
   {
     id: "kieran_ash",
@@ -1372,6 +1434,7 @@ export const STUDENTS = [
     greek: "None",
     family: "Ash — middle class. Parents are both journalists. Kieran has documented everything he has witnessed at Noctis in encrypted files on an off-campus server.",
     personality: "Principled to the point of danger. Has twice attempted to publish, twice been stopped. Still has the files.",
+    clubs: ["cl_law", "cl_deb"],
   },
   {
     id: "mei_zhang",
@@ -1399,6 +1462,7 @@ export const STUDENTS = [
     greek: "None",
     family: "Zhang — immigrant family. Both parents in medicine. Mei's scholarship covers full tuition. She has the highest GPA in her year and has received three private meeting requests she declined.",
     personality: "Methodical and quietly furious. Keeps a clinical distance from Noctis culture. Takes extremely good notes on everything she witnesses.",
+    clubs: ["cl_pre"],
   },
   // Special accounts
   {
@@ -1429,6 +1493,9 @@ export const STUDENTS = [
     greek: "Sigma Delta Pi",
     family:
       "Ashford — political family. Cousin of Dorian Ashford. Senate track of her own.",
+    personality:
+      "Procedural and unsmiling. Knows every clause of the student constitution by heart. Treats Senate meetings as preparation for a Senate she fully intends to join. Her favour is earned slowly and lost in a single sentence.",
+    clubs: ["cl_law", "cl_deb"],
   },
 
   // ── MORE APEX ──
@@ -1444,10 +1511,11 @@ export const STUDENTS = [
     personality: "Aristocratic contempt. Treats everything as beneath him except what he wants — which he takes without hesitation.",
     traits: ["Old Money", "Untouchable", "Dark Academic", "Cold Blooded", "Legacy"],
     canSeeAuction: true, canSeeRelief: true, pets: [], autoReply: true,
+    clubs: ["cl_law", "cl_deb", "cl_syncsw"],
   },
   {
     id: "sable_cross", un: "Sable Cross", handle: "@sable_cross", pw: "sable2024",
-    cov: "shadows", tier: "apex", pic: "🌑",
+    cov: "shadows", tier: "apex", pic: "🜂",
     bio: "Shadows | Intelligence | I see everything. I say nothing. I act accordingly.",
     followers: 5600, following: 44, gaze: 9800,
     isMaster: true, isVerified: true, isSpecial: true, wealth: "Extreme", rep: "Information Broker",
@@ -1457,10 +1525,11 @@ export const STUDENTS = [
     personality: "Frighteningly observant. Communicates in half-sentences. Has a file on everyone.",
     traits: ["Dark Academic", "Mysterious", "Cold Blooded", "Untouchable", "Information Broker"],
     canSeeAuction: true, canSeeRelief: true, pets: [], autoReply: true,
+    clubs: ["cl_inv", "cl_chess"],
   },
   {
     id: "aurelia_vale", un: "Aurelia Vale", handle: "@aurelia_vale", pw: "aurelia2024",
-    cov: "silk", tier: "apex", pic: "🌹",
+    cov: "silk", tier: "apex", pic: "💋",
     bio: "Silk | Social Architect | Every room I enter becomes mine.",
     followers: 9100, following: 312, gaze: 18200,
     isMaster: true, isVerified: true, isSpecial: true, wealth: "Extreme", rep: "Social Queen",
@@ -1470,10 +1539,11 @@ export const STUDENTS = [
     personality: "Radiant and calculating. Her smile is weaponised. Has never been denied anything she has asked for.",
     traits: ["Old Money", "Socialite", "Glamorous", "Obsessive", "Dangerous"],
     canSeeAuction: true, canSeeRelief: true, pets: [], autoReply: true,
+    clubs: ["cl_film", "cl_art", "cl_inv"],
   },
   {
     id: "roman_blackwood", un: "Roman Blackwood", handle: "@roman_blackwood", pw: "roman2024",
-    cov: "blades", tier: "apex", pic: "⚔️",
+    cov: "blades", tier: "apex", pic: "🛡️",
     bio: "Blades | Combat Champion (regional) | What I protect, I own.",
     followers: 6400, following: 180, gaze: 11500,
     isMaster: true, isVerified: true, isSpecial: true, wealth: "Old Money", rep: "Physical Apex",
@@ -1483,10 +1553,11 @@ export const STUDENTS = [
     personality: "Controlled aggression. Extremely disciplined. Sebastian's protection in exchange for intelligence access.",
     traits: ["Old Money", "Dangerous", "Disciplined", "Protective", "Ruthless"],
     canSeeAuction: true, canSeeRelief: true, pets: [], autoReply: true,
+    clubs: ["cl_fen", "cl_rug", "cl_ten"],
   },
   {
     id: "caelum_noir", un: "Caelum Noir", handle: "@caelum_noir", pw: "caelum2024",
-    cov: "shadows", tier: "apex", pic: "🔮",
+    cov: "shadows", tier: "apex", pic: "🜃",
     bio: "Shadows | Psychology | Apex Leadership Track | I don't break people. I redirect them.",
     followers: 4800, following: 67, gaze: 8900,
     isMaster: true, isVerified: true, isSpecial: true, wealth: "Extreme", rep: "The Architect",
@@ -1496,6 +1567,7 @@ export const STUDENTS = [
     personality: "Eerily pleasant. Diagnoses people as a hobby. Has never raised his voice in four semesters.",
     traits: ["Dark Academic", "Mysterious", "Calculated", "Unnerving", "Architect"],
     canSeeAuction: true, canSeeRelief: true, pets: [], autoReply: true,
+    clubs: ["cl_phil", "cl_writ", "cl_ten"],
   },
   {
     id: "isadora_knight", un: "Isadora Knight", handle: "@isadora_knight", pw: "knight2024",
@@ -1508,6 +1580,7 @@ export const STUDENTS = [
     family: "Knight Family — three generations in private equity. Isadora's mother sits on the NU board of trustees. Isadora knows which professors to fear and which ones she controls.",
     personality: "Meticulous and cold. Has never lost a negotiation. Considers emotion a design flaw.",
     canSeeAuction: true, canSeeRelief: true, pets: [],
+    clubs: ["cl_law", "cl_deb", "cl_mar"],
   },
   {
     id: "trent_morrison", un: "Trent Morrison", handle: "@trent_morrison", pw: "morrison2024",
@@ -1522,12 +1595,13 @@ export const STUDENTS = [
     traits: ["Dark Academic", "Old Money", "Untouchable", "Obsessive", "Dangerous"],
     canSeeAuction: true, canSeeRelief: true, pets: [],
     autoReply: true,
+    clubs: ["cl_law", "cl_deb", "cl_sw"],
   },
 
   // ── MORE ASCENDANT ──
   {
     id: "irina_sorel", un: "Irina Sorel", handle: "@irina_sorel", pw: "irina2024",
-    cov: "silk", tier: "ascendant", pic: "🌸",
+    cov: "silk", tier: "ascendant", pic: "🌷",
     bio: "Silk | Ascendant | I work for it. And when I have it, you'll know.",
     followers: 2200, following: 440, gaze: 4100,
     wealth: "New Money", rep: "Rising Star",
@@ -1537,6 +1611,7 @@ export const STUDENTS = [
     personality: "Elegantly relentless. Watches the Apex students with a mixture of admiration and cold ambition.",
     traits: ["New Money", "Ambitious", "Rising Star", "Polished", "Relentless"],
     pets: [], autoReply: true,
+    clubs: ["cl_film", "cl_art"],
   },
   {
     id: "alistair_grey", un: "Alistair Grey", handle: "@alistair_grey", pw: "alistair2024",
@@ -1549,10 +1624,11 @@ export const STUDENTS = [
     family: "Grey Family — tech fortune, three years old. Father sold a logistics platform for $800M. Alistair is buying his way into the circles that don't sell memberships.",
     personality: "Charismatic and ruthless. Has his Senate seat already planned. Treats every social interaction as a campaign event.",
     pets: [],
+    clubs: ["cl_deb", "cl_law"],
   },
   {
     id: "petra_volkov", un: "Petra Volkov", handle: "@petra_volkov", pw: "petra2024",
-    cov: "blades", tier: "ascendant", pic: "🗡️",
+    cov: "blades", tier: "ascendant", pic: "🪓",
     bio: "Blades | Combat | I don't need to be liked. I need to be respected.",
     followers: 1400, following: 188, gaze: 2700,
     wealth: "New Money", rep: "Iron",
@@ -1561,6 +1637,7 @@ export const STUDENTS = [
     family: "Volkov Family — private military contractors operating in Eastern Europe and Africa. Petra has been trained in combat since age nine.",
     personality: "Precise and unemotional. Has beaten two Apex-tier students in Blades competition.",
     pets: [],
+    clubs: ["cl_fen", "cl_rug"],
   },
   {
     id: "emile_beaumont", un: "Emile Beaumont", handle: "@emile_beaumont", pw: "emile2024",
@@ -1573,10 +1650,11 @@ export const STUDENTS = [
     family: "Beaumont Family — Parisian private banking. Father is managing director of a bank that doesn't advertise its existence. Emile is here to access the Investment Society's networks.",
     personality: "Analytical to the point of social awkwardness. Has a mind for risk modelling that faculty cite in academic papers.",
     pets: [],
+    clubs: ["cl_inv"],
   },
   {
     id: "seraphine_lace", un: "Seraphine Lace", handle: "@seraphine_lace", pw: "seraph2024",
-    cov: "silk", tier: "ascendant", pic: "🌙",
+    cov: "silk", tier: "ascendant", pic: "🪞",
     bio: "Silk | Arts | I make beauty. I study power. Both require total control.",
     followers: 3100, following: 504, gaze: 5900,
     wealth: "New Money", rep: "Aesthetic Force",
@@ -1585,6 +1663,7 @@ export const STUDENTS = [
     family: "Lace Family — fashion industry. Mother runs a luxury fashion house, Paris and Milan. Seraphine is expected to inherit. She is here to learn the power that fashion cannot teach.",
     personality: "Haunting and magnetic. Makes art about the dark systems at Noctis without explicitly referencing them. Faculty find it uncomfortable and award it prizes.",
     pets: [],
+    clubs: ["cl_art"],
   },
   {
     id: "dex_harlow", un: "Dex Harlow", handle: "@dex_harlow", pw: "dex2024",
@@ -1597,6 +1676,7 @@ export const STUDENTS = [
     family: "Harlow Family — sports equipment manufacturing. Dex is a three-sport athlete. His father's company sponsors NU's athletics program.",
     personality: "Boisterous and physically confident. Uses athletic achievement as social currency.",
     pets: [],
+    clubs: ["cl_inv", "cl_rug"],
   },
   {
     id: "nadia_maris", un: "Nadia Maris", handle: "@nadia_maris", pw: "nadia2024",
@@ -1609,6 +1689,7 @@ export const STUDENTS = [
     family: "Maris Family — pharmaceutical biotech, founded 8 years ago, worth $400M. Nadia is being groomed to run the medical research division after her MD.",
     personality: "Intensely focused. Terrifyingly competent. Has already co-authored a paper with Dr. Voss that she won't discuss.",
     pets: [],
+    clubs: ["cl_pre"],
   },
   {
     id: "theron_ashe", un: "Theron Ashe", handle: "@theron_ashe", pw: "theron2024",
@@ -1621,12 +1702,13 @@ export const STUDENTS = [
     family: "Ashe Family — media and broadcasting. Father owns a regional television network. Theron is the Debate Union's current president.",
     personality: "Eloquent and confident. Makes everyone feel heard while extracting what he needs.",
     pets: [],
+    clubs: ["cl_film", "cl_art"],
   },
 
   // ── MORE MERIT ──
   {
     id: "jasper_cole", un: "Jasper Cole", handle: "@jasper_cole", pw: "jasper2024",
-    cov: "shadows", tier: "merit", pic: "💻",
+    cov: "shadows", tier: "merit", pic: "⌨️",
     bio: "Shadows | CS | I built something once. I'll build something better here.",
     followers: 220, following: 340, gaze: 410,
     wealth: "Earned", rep: "Hacker",
@@ -1635,6 +1717,7 @@ export const STUDENTS = [
     family: "Cole Family — working class, Manchester UK. Jasper is here on a full CS scholarship. Coded his first app at 12. Is currently doing things with the university network that nobody has noticed yet.",
     personality: "Quietly anarchic. Observes Noctis with simultaneous fascination and revulsion.",
     pets: [],
+    clubs: ["cl_inv", "cl_chess"],
   },
   {
     id: "amara_obi", un: "Amara Obi", handle: "@amara_obi", pw: "amara2024",
@@ -1647,6 +1730,7 @@ export const STUDENTS = [
     family: "Obi Family — Lagos, Nigeria. Father is a secondary school teacher. Mother runs a tailoring business. Amara earned every door she walked through.",
     personality: "Fiercely intelligent. Has a code of ethics she has not broken yet.",
     pets: [],
+    clubs: ["cl_law", "cl_deb"],
   },
   {
     id: "luca_romani", un: "Luca Romani", handle: "@luca_romani", pw: "luca2024",
@@ -1659,6 +1743,7 @@ export const STUDENTS = [
     family: "Romani Family — Naples, Italy. Father is a mechanic. Luca is here on an athletic scholarship (swimming, ranked 3rd nationally at 19). Lost it briefly in semester 2. Got it back.",
     personality: "Guileless and physically driven. Completely unequipped for Noctis's politics. Still standing, somehow.",
     pets: [],
+    clubs: ["cl_inv", "cl_rug"],
   },
   {
     id: "zara_west", un: "Zara West", handle: "@zara_west", pw: "zara2024",
@@ -1671,6 +1756,7 @@ export const STUDENTS = [
     family: "West Family — Detroit, Michigan. Mother is a social worker. Zara is editor of the Noctis Review. She has found things she cannot publish. The decisions are eating her alive.",
     personality: "Driven and morally troubled. Writes with precision and fury. Is being watched more than she knows.",
     pets: [],
+    clubs: ["cl_writ", "cl_phil"],
   },
   {
     id: "ivan_petrov", un: "Ivan Petrov", handle: "@ivan_petrov", pw: "ivan2024",
@@ -1683,6 +1769,7 @@ export const STUDENTS = [
     family: "Petrov Family — Minsk, Belarus. Engineer father, teacher mother. Ivan writes algorithms in his sleep and has already been approached by two faculty members whose research needs he quietly enables.",
     personality: "Methodical to the point of unsociability. Prefers problems to people.",
     pets: [],
+    clubs: ["cl_inv", "cl_chess"],
   },
   {
     id: "grace_adeyemi", un: "Grace Adeyemi", handle: "@grace_adeyemi", pw: "grace2024",
@@ -1695,6 +1782,7 @@ export const STUDENTS = [
     family: "Adeyemi Family — Ibadan, Nigeria. Grace is a classical pianist, grade 8 at age 14, admitted on a fine arts scholarship. She plays at Apex parties sometimes — it's the only currency she has with them.",
     personality: "Gentle and watchful. Stays because leaving would mean losing everything.",
     pets: [],
+    clubs: ["cl_art"],
   },
   {
     id: "ben_castle", un: "Ben Castle", handle: "@ben_castle", pw: "ben2024",
@@ -1707,6 +1795,7 @@ export const STUDENTS = [
     family: "Castle Family — Glasgow, Scotland. Father is a retired soldier. Ben grew up in poverty. His scholarship is for academic excellence in history and physical performance. He placed third in the Blades Combat Trials in his first semester.",
     personality: "Quietly furious at inequity. Has an instinct for protecting others that Noctis is slowly testing to its limits.",
     pets: [],
+    clubs: ["cl_fen", "cl_rug"],
   },
   {
     id: "priya_sharma", un: "Priya Sharma", handle: "@priya_sharma", pw: "priya2024",
@@ -1719,6 +1808,7 @@ export const STUDENTS = [
     family: "Sharma Family — Mumbai, India. Both parents are doctors in a public hospital. Priya is here on a full medical scholarship. The GPA requirement to keep it is 3.9. She has maintained 3.94. The cost is everything.",
     personality: "Intense and methodical. Exists in a state of low-grade terror that is entirely invisible on the surface.",
     pets: [],
+    clubs: ["cl_pre"],
   },
   {
     id: "tommy_briggs", un: "Tommy Briggs", handle: "@tommy_briggs", pw: "tommy2024",
@@ -1731,6 +1821,7 @@ export const STUDENTS = [
     family: "Briggs Family — Kansas City, Missouri. Parents are teachers. Tommy won a full political science scholarship. He is the only person in the Crowns Covenant who arrived on a Greyhound bus.",
     personality: "Loud and politically fearless. His directness reads as either refreshing or catastrophic depending on who is listening.",
     pets: [],
+    clubs: ["cl_deb", "cl_law"],
   },
   {
     id: "yuki_tanaka", un: "Yuki Tanaka", handle: "@yuki_tanaka", pw: "yuki2024",
@@ -1743,6 +1834,7 @@ export const STUDENTS = [
     family: "Tanaka Family — Osaka, Japan. Father is a software engineer. Yuki coded her first neural network at 15. She is the most technically advanced student in her cohort and has been quietly approached about a classified AI research role.",
     personality: "Focused and methodical. Allergic to small talk. Finds Noctis's power games intellectually interesting and personally repellent in equal measure.",
     pets: [],
+    clubs: ["cl_inv", "cl_chess"],
   },
   // ── MERCURIAL COSMONA (exclusive mint theme — Blades Apex) ──
   {
@@ -1774,6 +1866,7 @@ export const STUDENTS = [
     family: "Cosmona Family — private military dynasty. Seven generations of commissioned officers. Mercurial broke the pattern by attending Noctis rather than West Point, a decision still debated in intelligence circles.",
     personality: "Controlled precision. Never wastes a word. The mint aesthetic is deliberate — softness as camouflage. She is the most dangerous person in any room who doesn't look like it.",
     pets: [],
+    clubs: ["cl_fen", "cl_ten"],
   },
   // ── POLAPOLA (exclusive lolita theme — Films & TV Apex) ──
   {
@@ -1806,6 +1899,7 @@ export const STUDENTS = [
     family: "Polapola family — old-money arts patrons. Three generations of film financiers and festival directors. Her grandmother endowed the Noctis Film Archive. She inherited the taste, the capital, and the ambition to surpass both.",
     personality: "Dreamy but dangerously precise. Speaks in metaphors that turn out to be instructions. Has never raised her voice. Has never needed to. Her aesthetic is not affectation — it is armour in lace.",
     pets: [],
+    clubs: ["cl_film", "cl_art", "cl_ten"],
   },
 
   // ── YVONNE EVERLEIGH (exclusive dark amethyst theme — English Literature Apex) ──
@@ -1816,7 +1910,7 @@ export const STUDENTS = [
     pw: "yvonne1847",
     cov: "shadows",
     tier: "apex",
-    pic: "🔮",
+    pic: "🪶",
     bio: "English Literature. Old Money. Covenant of Shadows.\nThe library is not where I go to study.\nIt is where I go to disappear — and return as something sharper.",
     followers: 5240,
     following: 44,
@@ -1839,6 +1933,7 @@ export const STUDENTS = [
     family: "The Everleigh line — old money from three centuries of quiet accumulation. Patrons of the Noctis rare book collection since its founding. Yvonne's great-grandmother donated the Manuscript Room. She has never had to introduce herself in the right rooms. The right rooms already know her name.",
     personality: "Still as deep water. Reads every person she meets as though they are a text with an unreliable narrator. Has annotated her own copy of every major novel in the canon — in violet ink. Her silence is not emptiness; it is compression. When she speaks, the room leans in.",
     pets: [],
+    clubs: ["cl_writ", "cl_phil", "cl_ten"],
   },
     // ── ROSENIA ELLE (exclusive pastel_rose theme — Acting & Performance Apex) ──
     {
@@ -1848,7 +1943,7 @@ export const STUDENTS = [
       pw: "rosenia1847",
       cov: "silk",
       tier: "apex",
-      pic: "🌸",
+      pic: "🥀",
       bio: "Acting & Performance. Old Money. Covenant of Silk.\nThe whole world is a stage, darling.\nAnd I intend to play every part perfectly.",
       followers: 4560,
       following: 88,
@@ -1871,6 +1966,7 @@ export const STUDENTS = [
       family: "Elle family — old-money arts patrons of the French Riviera. Three generations of stage actresses and film financiers. Her grandmother was a celebrated Cannes debutante whose portrait hangs in the Noctis Arts Wing. Rosenia inherited the stage presence, the sapphire necklace, and the relentless precision to be irreplaceable.",
       personality: "Warmth that is entirely calculated. She remembers every name, every detail, every unguarded moment — not because she is kind, but because she understands that appearing to care is the performance that opens every door. The sweetest person in any room. Do not be deceived.",
       pets: [],
+      clubs: ["cl_film", "cl_art", "cl_ten"],
     },
 
   // ── NEW APEX ──
@@ -1886,6 +1982,7 @@ export const STUDENTS = [
     personality: "Impeccably composed. Never reveals what he wants until he already has it. Speaks as though everything he says is being recorded — because it probably is.",
     traits: ["Old Money", "Strategic Mind", "Cold Blooded", "Legacy", "Untouchable"],
     canSeeAuction: true, canSeeRelief: true, pets: [], autoReply: true,
+    clubs: ["cl_law", "cl_deb", "cl_mar"],
   },
   {
     id: "sylvie_moreau", un: "Sylvie Moreau", handle: "@sylvie_moreau", pw: "sylvie2024",
@@ -1899,6 +1996,7 @@ export const STUDENTS = [
     personality: "Glacially beautiful and weaponised. Controls social hierarchies the way a curator controls an exhibition — she decides what is seen and what is forgotten.",
     traits: ["Old Money", "Glamorous", "Untouchable", "Socialite", "Ice Queen"],
     canSeeAuction: true, canSeeRelief: true, pets: [], autoReply: true,
+    clubs: ["cl_film", "cl_art", "cl_syncsw"],
   },
 
   // ── NEW ASCENDANT ──
@@ -1914,6 +2012,7 @@ export const STUDENTS = [
     personality: "Effortlessly likeable. Every conversation is an intelligence operation conducted with a smile. He never asks for favours directly — he creates situations where others offer them.",
     traits: ["New Money", "Ambitious", "Charming", "Strategic Mind", "Rising Star"],
     pets: [], autoReply: true,
+    clubs: ["cl_deb", "cl_law"],
   },
   {
     id: "mira_foss", un: "Mira Foss", handle: "@mira_foss", pw: "mira2024",
@@ -1927,6 +2026,7 @@ export const STUDENTS = [
     personality: "Unreadable. Speaks rarely. When she does, it is always precise and usually alarming. Watching her think is like watching someone solve a problem the room doesn't know exists.",
     traits: ["New Money", "The Analyst", "Mysterious", "Science Brain", "Information Broker"],
     pets: [], autoReply: true,
+    clubs: ["cl_inv", "cl_chess"],
   },
   {
     id: "elias_thorn", un: "Elias Thorn", handle: "@elias_thorn", pw: "elias2024",
@@ -1940,6 +2040,7 @@ export const STUDENTS = [
     personality: "Controlled and direct. Has zero patience for social performance but has learned to fake it at exactly the level required. The only Ascendant student who can beat Roman Blackwood in a straight sprint.",
     traits: ["New Money", "Disciplined", "Physically Elite", "Strategic Mind", "Blunt"],
     pets: [], autoReply: true,
+    clubs: ["cl_fen", "cl_rug"],
   },
   {
     id: "clio_stavros", un: "Clio Stavros", handle: "@clio_stavros", pw: "clio2024",
@@ -1953,6 +2054,7 @@ export const STUDENTS = [
     personality: "Haunting aesthetic sensibility. Speaks about art the way others speak about survival. Has an uncomfortable habit of saying exactly what she observes about a person within minutes of meeting them.",
     traits: ["New Money", "Artistic Soul", "Aesthetic Force", "Perceptive", "Silk Power"],
     pets: [], autoReply: true,
+    clubs: ["cl_art"],
   },
 
   // ── NEW MERIT ──
@@ -1967,10 +2069,11 @@ export const STUDENTS = [
     family: "Bright family — working class, Portland Oregon. Single mother, two younger siblings. Jonas is here on a full CS scholarship. He finds Noctis's social architecture fascinating from a systems design perspective and terrifying from every other.",
     personality: "Wry and technically brilliant. Processes Noctis as a social operating system with exploitable bugs. Has already found two. Not sure what to do with them.",
     pets: [], autoReply: true,
+    clubs: ["cl_inv", "cl_chess"],
   },
   {
     id: "lena_zhao", un: "Lena Zhao", handle: "@lena_zhao", pw: "lena2024",
-    cov: "silk", tier: "merit", pic: "🌿",
+    cov: "silk", tier: "merit", pic: "🍃",
     bio: "Silk | International Relations | Scholarship\nThe world rewards people who understand it.\nI am learning to understand it.",
     followers: 420, following: 550, gaze: 780,
     wealth: "Earned", rep: "Diplomat",
@@ -1979,10 +2082,11 @@ export const STUDENTS = [
     family: "Zhao family — Beijing, China. Father is a mid-level civil servant. Mother teaches secondary school. Lena speaks four languages and is here because a professor at her previous university submitted her application without asking her.",
     personality: "Careful and exceptionally good at reading rooms. Has been trained by circumstance to be invisible until the moment it helps to be visible. Silk Covenant was not her first choice. She's learning to use it.",
     pets: [], autoReply: true,
+    clubs: ["cl_deb", "cl_pre"],
   },
   {
     id: "darius_maal", un: "Darius Maal", handle: "@darius_maal", pw: "darius2024",
-    cov: "blades", tier: "merit", pic: "🏹",
+    cov: "blades", tier: "merit", pic: "🎯",
     bio: "Blades | Military Science | Scholarship\nI outworked everyone to get here.\nI'll outwork everyone to stay.",
     followers: 310, following: 260, gaze: 580,
     wealth: "Earned", rep: "Iron Will",
@@ -1991,10 +2095,11 @@ export const STUDENTS = [
     family: "Maal family — Dakar, Senegal. Father served in the Senegalese Army. Darius was ranked nationally in fencing by 17. He is here on a military science and athletic scholarship. He is the only student who genuinely frightens Petra Volkov in sparring.",
     personality: "Intensely focused. Speaks with a directness that reads as confrontational until people realise it is simply respect — for themselves and for truth.",
     pets: [], autoReply: true,
+    clubs: ["cl_fen", "cl_rug"],
   },
   {
     id: "freya_holst", un: "Freya Holst", handle: "@freya_holst", pw: "freya2024",
-    cov: "crowns", tier: "merit", pic: "⚖️",
+    cov: "crowns", tier: "merit", pic: "📜",
     bio: "Crowns | Pre-Law | Scholarship\nThe law is a weapon.\nI intend to master it before it masters me.",
     followers: 360, following: 480, gaze: 660,
     wealth: "Earned", rep: "Sharp",
@@ -2003,6 +2108,7 @@ export const STUDENTS = [
     family: "Holst family — Bergen, Norway. Father is a public defender. Mother is a nurse. Freya won a law society national moot competition at 17. Professor Hargrove called her brief 'structurally sound and morally naive.' She took it as a compliment and a warning.",
     personality: "Precise and quietly furious. Has decided to learn how the system works at Noctis before deciding what to do about it. The patience required costs her more than she shows.",
     pets: [], autoReply: true,
+    clubs: ["cl_law", "cl_deb"],
   },
   {
     id: "noel_abara", un: "Noel Abara", handle: "@noel_abara", pw: "noel2024",
@@ -2015,10 +2121,11 @@ export const STUDENTS = [
     family: "Abara family — Accra, Ghana. Noel is a jazz musician and classical composer. His scholarship is split between fine arts and academic achievement. He plays in the faculty lounge sometimes when no one is watching. Three faculty members have 'accidentally' stayed late on those evenings.",
     personality: "Gentle and deeply observant. Processes Noctis through metaphor. His music has a way of making the unspoken audible. Some people find this unsettling.",
     pets: [], autoReply: true,
+    clubs: ["cl_art"],
   },
   {
     id: "saoirse_quinn", un: "Saoirse Quinn", handle: "@saoirse_quinn", pw: "saoirse2024",
-    cov: "shadows", tier: "merit", pic: "🌒",
+    cov: "shadows", tier: "merit", pic: "🌫️",
     bio: "Shadows | Psychology | Scholarship\nNoctis is the most interesting case study I've ever been inside.",
     followers: 180, following: 240, gaze: 330,
     wealth: "Earned", rep: "Observer",
@@ -2027,6 +2134,7 @@ export const STUDENTS = [
     family: "Quinn family — Galway, Ireland. Father is a clinical psychologist. Saoirse grew up inside conversations about behaviour and motive. She arrived at Noctis with frameworks for every social dynamic she encountered — then found three dynamics her frameworks didn't cover.",
     personality: "Curious and slightly detached. Watches social situations like a field researcher. Has a tendency to narrate events in her head in third person. The habit is useful and occasionally alienating.",
     pets: [], autoReply: true,
+    clubs: ["cl_phil", "cl_writ"],
   },
   {
     id: "haruto_mori", un: "Haruto Mori", handle: "@haruto_mori", pw: "haruto2024",
@@ -2039,6 +2147,7 @@ export const STUDENTS = [
     family: "Mori family — Kyoto, Japan. Engineer parents. Haruto was quietly recruited from a Tokyo high school AI competition. He is the quietest person Dr. Orion Blackthorn has ever met and the one whose code he reviews first.",
     personality: "Almost wordless. Communicates in precise two-sentence observations that tend to end conversations because they've finished them. Finds Noctis's power dynamics interesting from a game theory perspective and says so, which makes people either very comfortable or very uncomfortable.",
     pets: [], autoReply: true,
+    clubs: ["cl_inv", "cl_chess"],
   },
   {
     id: "idris_kane", un: "Idris Kane", handle: "@idris_kane", pw: "idris2024",
@@ -2051,6 +2160,7 @@ export const STUDENTS = [
     family: "Kane family — Lagos, Nigeria. Parents are both academics. Idris speaks six languages, ran his secondary school's student parliament, and arrived at Noctis with a following of 12,000 online from a political commentary channel he runs pseudonymously.",
     personality: "Magnetic and morally alive. The most naturally charismatic Merit student at Noctis. Currently wrestling with whether to use that charisma for what Noctis teaches or what his parents believe in.",
     pets: [], autoReply: true,
+    clubs: ["cl_deb", "cl_law"],
   },
   {
     id: "emilia_russo", un: "Emilia Russo", handle: "@emilia_russo", pw: "emilia2024",
@@ -2063,6 +2173,7 @@ export const STUDENTS = [
     family: "Russo family — Naples, Italy. Father is a restoration artist. Mother restores old buildings. Emilia grew up understanding that things break and can be made whole again. Her installations at Noctis deal with power and complicity in ways that make Apex students offer to buy them before they're finished.",
     personality: "Fierce and principled. Has refused two commission offers from families whose money she won't touch. Becoming aware that refusing has its own power dynamics.",
     pets: [], autoReply: true,
+    clubs: ["cl_art"],
   },
   {
     id: "omar_hassan", un: "Omar Hassan", handle: "@omar_hassan", pw: "omar2024",
@@ -2075,6 +2186,7 @@ export const STUDENTS = [
     family: "Hassan family — Nairobi, Kenya. Father runs a microfinance NGO. Omar arrived at Noctis understanding poverty empirically. Emile Beaumont called his risk analysis 'intuitively correct' in a seminar and then spent a week trying to understand why.",
     personality: "Quietly driven. Studies everything — the coursework, the people, the power structures. Has a habit of asking the question nobody in the room was willing to ask. Not aggressive. Just genuinely unbothered by the discomfort the question causes.",
     pets: [], autoReply: true,
+    clubs: ["cl_inv"],
   },
   {
     id: "phoebe_waites", un: "Phoebe Waites", handle: "@phoebe_waites", pw: "phoebe2024",
@@ -2087,6 +2199,7 @@ export const STUDENTS = [
     family: "Waites family — Edinburgh, Scotland. Both parents are librarians. Phoebe has read more than anyone she has ever met, including the faculty. Dr. Pemberton singled out her first essay in front of the class. Phoebe was the only one who understood it was not a compliment.",
     personality: "Bookishly fierce. Has a quote for every situation and a literary framework for every cruelty. Finding that Noctis is harder to understand through fiction than she expected. The gap is educational.",
     pets: [], autoReply: true,
+    clubs: ["cl_writ", "cl_phil"],
   },
   {
     id: "caleb_vance", un: "Caleb Vance", handle: "@caleb_vance", pw: "caleb2024",
@@ -2099,6 +2212,7 @@ export const STUDENTS = [
     family: "Vance family — Manchester, UK. Father is a security contractor. Caleb has trained in Muay Thai since age eight. He placed first in the Blades Combat Trials this semester. Roman Blackwood watched, said nothing, and invited him to sparring the next morning.",
     personality: "Direct and physically present. Finds the social politics of Noctis baffling and the physical hierarchy simple. Is gradually learning they are the same thing.",
     pets: [], autoReply: true,
+    clubs: ["cl_fen", "cl_rug"],
   },
   {
     id: "matteo_ferrara", un: "Matteo Ferrara", handle: "@matteo_ferrara", pw: "matteo2024",
@@ -2111,6 +2225,7 @@ export const STUDENTS = [
     family: "Ferrara family — Milan, Italy. Father builds racing car components. Matteo builds things that work in conditions they weren't designed for. He is the only Merit student Dr. Blackthorn has invited to his lab annex. He does not discuss what happens there.",
     personality: "Quietly methodical. Rebuilds broken things by default, including social situations. Has an instinct for structural weakness that applies equally to bridges and to people.",
     pets: [], autoReply: true,
+    clubs: ["cl_inv"],
   },
   // ── MORE PETS ──
   {
@@ -2121,6 +2236,7 @@ export const STUDENTS = [
     isPet: true, petType: "stockholm", masterId: "trent_morrison", masterName: "Trent Morrison",
     usageToday: 4, collarType: "Morrison Blades Custom", sensitivity: 78, broken: 55, obedience: 82, freedom: 38,
     defTheme: "collar", canPost: false, canTheme: false, badge: "🔒 PET", bColor: "#8b0000", cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_010", un: "pet #010", handle: "@property_lv1", pw: "collar010",
@@ -2130,6 +2246,7 @@ export const STUDENTS = [
     isPet: true, petType: "broken", masterId: "lucian_vane", masterName: "Lucian Vane",
     usageToday: 6, collarType: "Vane Dynasty Gold", sensitivity: 92, broken: 88, obedience: 97, freedom: 10,
     defTheme: "collar", canPost: false, canTheme: false, badge: "🔒 PET", bColor: "#8b0000", cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_011", un: "pet #011", handle: "@property_sc1", pw: "collar011",
@@ -2139,6 +2256,7 @@ export const STUDENTS = [
     isPet: true, petType: "compliant", masterId: "sable_cross", masterName: "Sable Cross",
     usageToday: 2, collarType: "Obsidian Intelligence Chain", sensitivity: 84, broken: 73, obedience: 91, freedom: 22,
     defTheme: "collar", canPost: false, canTheme: false, badge: "🔒 PET", bColor: "#8b0000", cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_012", un: "pet #012", handle: "@property_av1", pw: "collar012",
@@ -2148,6 +2266,7 @@ export const STUDENTS = [
     isPet: true, petType: "stockholm", masterId: "aurelia_vale", masterName: "Aurelia Vale",
     usageToday: 5, collarType: "Vale Rose Diamond", sensitivity: 89, broken: 82, obedience: 95, freedom: 16,
     defTheme: "collar", canPost: false, canTheme: false, badge: "🔒 PET", bColor: "#8b0000", cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_013", un: "pet #013", handle: "@property_rb1", pw: "collar013",
@@ -2157,6 +2276,7 @@ export const STUDENTS = [
     isPet: true, petType: "fighting", masterId: "roman_blackwood", masterName: "Roman Blackwood",
     usageToday: 3, collarType: "Blackwood Military Steel", sensitivity: 66, broken: 44, obedience: 60, freedom: 55,
     defTheme: "collar", canPost: false, canTheme: false, badge: "🔒 PET", bColor: "#8b0000", cover: "⛓️",
+    clubs: ["cl_collar"],
   },
   {
     id: "pet_014", un: "pet #014", handle: "@property_xh1", pw: "collar014",
@@ -2166,6 +2286,7 @@ export const STUDENTS = [
     isPet: true, petType: "compliant", masterId: "xavier_holloway", masterName: "Xavier Holloway",
     usageToday: 4, collarType: "Holloway Platinum Inlay", sensitivity: 80, broken: 68, obedience: 90, freedom: 28,
     defTheme: "collar", canPost: false, canTheme: false, badge: "🔒 PET", bColor: "#8b0000", cover: "⛓️",
+    clubs: ["cl_collar"],
   },
 ];
 
