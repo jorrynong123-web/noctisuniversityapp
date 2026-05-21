@@ -263,8 +263,10 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
         const aiPosts = await _generateNPCPosts(creds ?? undefined);
         for (const p of aiPosts) {
           try { await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }); } catch {}
-          // Schedule NPC comments on each generated post (non-blocking, staggered delays)
-          if (creds) setTimeout(() => _generateNPCComments(p.id, p.content, p.user_id, creds).catch(() => {}), 5000 + Math.random() * 25000);
+          // Schedule NPC comments on each generated post (non-blocking, staggered delays).
+          // Always schedule — _generateNPCComments has a template fallback when no creds, so
+          // users without an API key still see reactions in the feed.
+          setTimeout(() => _generateNPCComments(p.id, p.content, p.user_id, creds ?? null).catch((e) => console.error("[npc-comments]", e)), 3000 + Math.random() * 7000);
         }
         posts = [...aiPosts.map((p: any) => ({ ...p, userId: p.user_id, createdAt: p.created_at })), ...posts];
       } else if (posts.length === 0) {
@@ -1994,6 +1996,12 @@ export default function Umbra() {
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupMembers, setNewGroupMembers] = useState("");
+  // Selected member IDs (for the new chip-style picker on group create) and
+  // the current search query that drives the @ autocomplete dropdown.
+  const [groupMemberPicks, setGroupMemberPicks] = useState<string[]>([]);
+  const [groupMemberQuery, setGroupMemberQuery] = useState("");
+  // Query for the "start a new DM" search box at the top of the DMs tab.
+  const [newDmQuery, setNewDmQuery] = useState("");
   const [messagesTab, setMessagesTab] = useState<"dms"|"groups">("dms");
 
   // ── FORUM ──
@@ -2048,6 +2056,79 @@ export default function Umbra() {
     } catch (e) {}
     return WALLET_INIT[id] ?? 50000;
   };
+  // ── Reusable user-mention matcher ──────────────────────────────────────────
+  // Returns up to 8 ACCTS entries whose handle/un loosely matches the query.
+  // Used by the send-money search and the DM autocomplete dropdown.
+  // - Strips a leading "@" from the query
+  // - Matches against u.un, u.handle, u.id (case-insensitive substring)
+  // - Excludes guests and an optional list of already-picked IDs
+  const userMentionMatches = useCallback((rawQuery: string, excludeIds: string[] = []): any[] => {
+    const q = rawQuery.replace(/^@/, "").trim().toLowerCase();
+    if (!q || q.length < 1) return [];
+    const exclude = new Set(excludeIds);
+    return (Object.values(ACCTS) as any[])
+      .filter((u: any) => {
+        if (!u?.un || u.isGuest) return false;
+        if (exclude.has(u.id)) return false;
+        const un = (u.un || "").toLowerCase();
+        const handle = (u.handle || "").toLowerCase().replace(/^@/, "");
+        const id = (u.id || "").toLowerCase();
+        return un.includes(q) || handle.includes(q) || id.includes(q);
+      })
+      .sort((a: any, b: any) => {
+        // Prefer real users, then exact-prefix matches, then alpha
+        const aReal = a._real || a.isReal ? 0 : 1;
+        const bReal = b._real || b.isReal ? 0 : 1;
+        if (aReal !== bReal) return aReal - bReal;
+        const aStart = (a.un || "").toLowerCase().startsWith(q) ? 0 : 1;
+        const bStart = (b.un || "").toLowerCase().startsWith(q) ? 0 : 1;
+        if (aStart !== bStart) return aStart - bStart;
+        return (a.un || "").localeCompare(b.un || "");
+      })
+      .slice(0, 8);
+    // Empty deps: ACCTS is a module-level mutable object — Object.values()
+    // always reads its current state. Adding acctVer here would create a TDZ
+    // crash since acctVer is declared later in this component.
+  }, []);
+
+  // ── Tier → starting balance helper (single source of truth) ────────────────
+  // Apex 500k · Ascendant 100k · Merit 50k. Used by signup AND the one-time
+  // migration that bumps existing under-funded accounts to their tier minimum.
+  const tierStartBal = (tier: string | undefined): number => {
+    const t = (tier || "").toLowerCase();
+    if (t === "apex" || t === "faculty") return 500000;
+    if (t === "ascendant") return 100000;
+    return 50000; // merit / commoner / pet / anything else
+  };
+  // One-time migration: bring existing real-user wallets up to tier minimum.
+  // Runs whenever `uid` changes (i.e. login/refresh). A localStorage flag
+  // ensures we never re-pay the same browser session. Only ever INCREASES
+  // balances — users who earned more than their tier amount are untouched.
+  // We wait for at least one real user to be in ACCTS before marking done,
+  // since ACCTS is loaded asynchronously from localStorage + Supabase.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("umbra_balance_tier_migration_v1") === "done") return;
+      const wallets: Record<string, number> = JSON.parse(localStorage.getItem("umbra_wallets") || "{}");
+      let changed = false;
+      let realFound = false;
+      Object.values(ACCTS).forEach((u: any) => {
+        if (!u?.id || (!u._real && !u.isReal)) return;
+        realFound = true;
+        const min = tierStartBal(u.tier);
+        const cur = wallets[u.id];
+        if (cur === undefined || cur < min) {
+          wallets[u.id] = min;
+          changed = true;
+        }
+      });
+      if (changed) localStorage.setItem("umbra_wallets", JSON.stringify(wallets));
+      if (realFound) {
+        localStorage.setItem("umbra_balance_tier_migration_v1", "done");
+        if (uid && wallets[uid] !== undefined) setWalletBalance(wallets[uid]);
+      }
+    } catch {}
+  }, [uid]);
 
   // Wallet state
   // ── LIVE AUCTION SYSTEM ──
@@ -4160,7 +4241,11 @@ export default function Umbra() {
   }, []);
   const createGroup = useCallback(() => {
     if (!newGroupName.trim()) { toast("Group needs a name."); return; }
-    const memberIds = newGroupMembers.split(",").map(s => s.trim()).filter(Boolean);
+    // Prefer the new chip-picker selections; fall back to the legacy comma string for back-compat.
+    const fromPicks = groupMemberPicks.slice();
+    const fromLegacy = newGroupMembers.split(",").map(s => s.trim()).filter(Boolean);
+    const memberIds = fromPicks.length > 0 ? fromPicks : fromLegacy;
+    if (memberIds.length === 0) { toast("Add at least one member."); return; }
     const allIds = [...new Set([uid, ...memberIds])];
     const newGroup = {
       id: `grp_${Date.now()}`,
@@ -4173,9 +4258,9 @@ export default function Umbra() {
     setGroups(updated);
     saveGroups(updated);
     setActiveGroupId(newGroup.id);
-    setNewGroupName(""); setNewGroupMembers(""); setShowCreateGroup(false);
-    toast(`💬 Group "${newGroup.name}" created`);
-  }, [newGroupName, newGroupMembers, uid, groups, saveGroups, toast]);
+    setNewGroupName(""); setNewGroupMembers(""); setGroupMemberPicks([]); setGroupMemberQuery(""); setShowCreateGroup(false);
+    toast(`💬 Group "${newGroup.name}" created with ${allIds.length} members`);
+  }, [newGroupName, newGroupMembers, groupMemberPicks, uid, groups, saveGroups, toast]);
   const sendGroupMessage = useCallback(() => {
     if (!groupTxt.trim() || !activeGroupId) return;
     const msg = { id: `gm_${Date.now()}`, uid, un: user.un, pic: user.pic, t: groupTxt.trim(), ts: Date.now() };
@@ -4570,7 +4655,7 @@ export default function Umbra() {
     let tier = "merit";
     if (apexScore >= 30) tier = "apex";
     else if (apexScore >= 15) tier = "ascendant";
-    const startBal = tier === "apex" ? 500000 : tier === "ascendant" ? 100000 : 25000;
+    const startBal = tierStartBal(tier);
     const wealth = tier === "apex" ? "Old Money" : tier === "ascendant" ? "New Money" : "Scholarship";
     const displayBio = newBio.trim() || `${cv.name} | ${tier.charAt(0).toUpperCase() + tier.slice(1)}`;
     const chosenPic = newPicData.trim() || cv.emoji;
@@ -4885,21 +4970,28 @@ export default function Umbra() {
     const capturedPostId = postId;
     const capturedContent = pTxt.trim();
     const capturedAuthor = user.un;
-    // NPC AI comments — staggered delays so they appear naturally over time
-    // Build dynamic commenter pool from ALL students with personality — not fixed list
+    // NPC AI comments — staggered delays so they appear naturally over time.
+    // Pool excludes real users (we don't want signed-up players ghost-writing comments).
     const npcPool = (Object.values(ACCTS) as any[]).filter(
-      (n: any) => n.personality && n.id !== uid && !n.isGuest && n.un
+      (n: any) => n.personality && n.id !== uid && !n.isGuest && !n._real && !n.isReal && n.un
     );
     const shuffled = [...npcPool].sort(() => Math.random() - 0.5);
     const commenters = shuffled.slice(0, 2 + Math.floor(Math.random() * 3)); // 2-4 commenters
     commenters.forEach((npc, idx) => {
-      const delay = (20 + Math.random() * 80) * 1000 + idx * (10000 + Math.random() * 15000);
+      // Faster delays so users actually see them: 4-12s first, 4-9s between subsequent commenters.
+      const delay = (4 + Math.random() * 8) * 1000 + idx * (4000 + Math.random() * 5000);
       setTimeout(async () => {
         try {
           const aiRes = await fetch("/api/ai/npc-comment", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ npcs: [npc], postContent: capturedContent, postAuthor: capturedAuthor }),
+            body: JSON.stringify({
+              npcs: [npc],
+              postContent: capturedContent,
+              postAuthor: capturedAuthor,
+              // Forward the user's API key so the comment uses their engine.
+              ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}),
+            }),
           });
           const { comments } = await aiRes.json();
           const c = comments?.[0];
@@ -4914,7 +5006,7 @@ export default function Umbra() {
               { ...p, c: [...(p.c || []), { id: `npc_c_${Date.now()}_${idx}`, uid: npc.id, un: npc.un, t: c.text }] }
             ));
           }
-        } catch {}
+        } catch (err) { console.error("[npc-comment]", err); }
       }, delay);
     });
     setPTxt("");
@@ -16500,7 +16592,29 @@ export default function Umbra() {
               <div style={{ ...card, padding: 20, width: 300 }}>
                 <p style={{ ...ttl(13), marginBottom: 4 }}>🎁 GIFT: {giftModal.itemName}</p>
                 <p style={{ fontSize: 12, color: T.muted, marginBottom: 12 }}>₦{giftModal.price.toLocaleString()}</p>
-                <input value={giftUser} onChange={e => setGiftUser(e.target.value)} placeholder="Recipient username" style={{ ...inp, marginBottom: 8 }} />
+                <div style={{ position: "relative" as const, marginBottom: 8 }}>
+                  <input value={giftUser} onChange={e => setGiftUser(e.target.value)} placeholder="Recipient username" style={{ ...inp, width: "100%" }} />
+                  {(() => {
+                    const matches = userMentionMatches(giftUser);
+                    if (!giftUser.trim() || matches.length === 0) return null;
+                    const exact = matches.find((m: any) => (m.un || "").toLowerCase() === giftUser.toLowerCase());
+                    if (exact && matches.length === 1) return null;
+                    return (
+                      <div style={{ position: "absolute" as const, top: "100%", left: 0, right: 0, marginTop: 4, background: T.card || "#1a1409", border: `1px solid ${T.border || "#362e1e"}`, borderRadius: 6, maxHeight: 200, overflowY: "auto" as const, zIndex: 250 }}>
+                        {matches.map((m: any) => (
+                          <button key={m.id} type="button" onClick={() => setGiftUser(m.un)}
+                            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 12px", background: "none", border: "none", borderBottom: `1px solid ${T.border || "#362e1e"}`, color: T.text, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                            <span style={{ fontSize: 18, width: 24, textAlign: "center" }}>{m.pic || "🌑"}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{m.un}</div>
+                              <div style={{ fontSize: 10, color: T.muted }}>{(m.tier || "merit").toUpperCase()}{(m._real || m.isReal) ? " · REAL" : ""}</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
                 <input value={giftMessage} onChange={e => setGiftMessage(e.target.value)} placeholder="Message (optional)" style={{ ...inp, marginBottom: 12 }} />
                 <div style={{ display: "flex", gap: 8 }}>
                   <button type="button" className="b" onClick={sendGift} style={{ ...btn(true), flex: 1 }}>Send Gift</button>
@@ -16671,9 +16785,32 @@ export default function Umbra() {
           {/* ── DIRECT MESSAGES TAB ── */}
           {messagesTab === "dms" && !dmConvId && !activeGroupId && (
             <>
+              {/* Start-new-DM search bar with @ autocomplete */}
+              <div style={{ position: "relative" as const, marginBottom: 12 }}>
+                <input value={newDmQuery} onChange={e => setNewDmQuery(e.target.value)} placeholder="✉ Start new DM — type @ + username…"
+                  style={{ ...inp, width: "100%" }} />
+                {(() => {
+                  const matches = userMentionMatches(newDmQuery, [uid || ""]);
+                  if (!newDmQuery.trim() || matches.length === 0) return null;
+                  return (
+                    <div style={{ position: "absolute" as const, top: "100%", left: 0, right: 0, marginTop: 4, background: T.card || "#1a1409", border: `1px solid ${T.border || "#362e1e"}`, borderRadius: 6, maxHeight: 280, overflowY: "auto" as const, zIndex: 60 }}>
+                      {matches.map((m: any) => (
+                        <button key={m.id} type="button" onClick={() => { setDmConvId(m.id); setNewDmQuery(""); }}
+                          style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", background: "none", border: "none", borderBottom: `1px solid ${T.border || "#362e1e"}`, color: T.text, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                          <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>{m.pic || "🌑"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{m.un}</div>
+                            <div style={{ fontSize: 10, color: T.muted }}>{m.handle || `@${m.un.toLowerCase().replace(/\s+/g, "_")}`} · {(m.tier || "merit").toUpperCase()}{(m._real || m.isReal) ? " · REAL" : ""}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
               {threadList.length === 0 && (
                 <div style={{ textAlign: "center", color: T.muted, padding: "40px 0", fontFamily: "'IM Fell English',serif", fontStyle: "italic" }}>
-                  No messages yet. Visit someone's profile and tap ✉ DM to start a conversation.
+                  No messages yet. Search above to start a conversation.
                 </div>
               )}
               {threadList.map(([otherId, threadMsgs]) => {
@@ -16879,12 +17016,54 @@ export default function Umbra() {
               {showCreateGroup && (
                 <div style={{ ...card, padding: 14, marginBottom: 12 }}>
                   <p style={{ ...lbl, marginBottom: 8 }}>NEW GROUP</p>
-                  <input value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="Group name" style={{ ...inp, marginBottom: 8 }} />
-                  <input value={newGroupMembers} onChange={e => setNewGroupMembers(e.target.value)} placeholder="Member IDs (comma-separated, e.g. sebastian_blackwood, elara_saint)" style={{ ...inp, marginBottom: 8 }} />
-                  <p style={{ fontSize: 11, color: T.muted, marginBottom: 8 }}>Use user IDs from their profile. You are automatically included.</p>
+                  <input value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="Group name" style={{ ...inp, marginBottom: 10 }} />
+                  <p style={{ fontSize: 11, color: T.muted, letterSpacing: "0.08em", marginBottom: 6 }}>MEMBERS</p>
+                  {/* Selected member chips */}
+                  {groupMemberPicks.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6, marginBottom: 8 }}>
+                      {groupMemberPicks.map((mid: string) => {
+                        const m = ACCTS[mid] as any;
+                        if (!m) return null;
+                        return (
+                          <span key={mid} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 14, background: "rgba(212,175,55,0.12)", border: `1px solid ${T.primary || "#d4af37"}`, color: T.primary || "#d4af37", fontSize: 12, fontFamily: "inherit" }}>
+                            <span>{m.pic || "🌑"}</span>
+                            <span>{m.un}</span>
+                            <button type="button" onClick={() => setGroupMemberPicks(p => p.filter(x => x !== mid))}
+                              style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 14, padding: 0, marginLeft: 2 }}>×</button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {/* Search input + dropdown */}
+                  <div style={{ position: "relative" as const, marginBottom: 8 }}>
+                    <input value={groupMemberQuery} onChange={e => setGroupMemberQuery(e.target.value)} placeholder="@ search by username…" style={{ ...inp, width: "100%" }} />
+                    {(() => {
+                      const matches = userMentionMatches(groupMemberQuery, [...groupMemberPicks, uid || ""]);
+                      if (!groupMemberQuery.trim() || matches.length === 0) return null;
+                      return (
+                        <div style={{ position: "absolute" as const, top: "100%", left: 0, right: 0, marginTop: 4, background: T.card || "#1a1409", border: `1px solid ${T.border || "#362e1e"}`, borderRadius: 6, maxHeight: 240, overflowY: "auto" as const, zIndex: 60 }}>
+                          {matches.map((m: any) => (
+                            <button key={m.id} type="button" onClick={() => {
+                              setGroupMemberPicks(p => p.includes(m.id) ? p : [...p, m.id]);
+                              setGroupMemberQuery("");
+                            }}
+                              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 12px", background: "none", border: "none", borderBottom: `1px solid ${T.border || "#362e1e"}`, color: T.text, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                              <span style={{ fontSize: 18, width: 24, textAlign: "center" }}>{m.pic || "🌑"}</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{m.un}</div>
+                                <div style={{ fontSize: 10, color: T.muted }}>{(m.tier || "merit").toUpperCase()}{(m._real || m.isReal) ? " · REAL" : ""}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <p style={{ fontSize: 11, color: T.muted, marginBottom: 10 }}>You are automatically added. Type @ + a username to find someone.</p>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button type="button" className="b" onClick={createGroup} style={{ ...btn(true), flex: 1, padding: "9px" }}>CREATE</button>
-                    <button type="button" className="b" onClick={() => setShowCreateGroup(false)} style={{ ...btn(false), flex: 1, padding: "9px" }}>CANCEL</button>
+                    <button type="button" className="b" onClick={() => { setShowCreateGroup(false); setGroupMemberPicks([]); setGroupMemberQuery(""); }} style={{ ...btn(false), flex: 1, padding: "9px" }}>CANCEL</button>
                   </div>
                 </div>
               )}
@@ -18257,12 +18436,38 @@ export default function Umbra() {
                 Available: <span style={{ color: T.primary, fontWeight: 700 }}>₦{walletBalance.toLocaleString()}</span>
               </p>
               <p style={{ fontSize: 11, color: T.muted, letterSpacing: "0.08em", marginBottom: 4 }}>RECIPIENT</p>
-              <input
-                style={{ ...inp, marginBottom: 12 }}
-                placeholder="@handle, display name, or user ID"
-                value={walletSendTo}
-                onChange={e => setWalletSendTo(e.target.value)}
-              />
+              <div style={{ position: "relative" as const, marginBottom: 12 }}>
+                <input
+                  style={{ ...inp, width: "100%" }}
+                  placeholder="@handle, display name, or user ID"
+                  value={walletSendTo}
+                  onChange={e => setWalletSendTo(e.target.value)}
+                />
+                {(() => {
+                  const matches = userMentionMatches(walletSendTo);
+                  if (!walletSendTo.trim() || matches.length === 0) return null;
+                  // Hide dropdown once the user has typed an exact match (so the picker doesn't linger)
+                  const exact = matches.find((m: any) =>
+                    (m.un || "").toLowerCase() === walletSendTo.toLowerCase() ||
+                    (m.handle || "").toLowerCase().replace(/^@/, "") === walletSendTo.toLowerCase().replace(/^@/, "")
+                  );
+                  if (exact && matches.length === 1) return null;
+                  return (
+                    <div style={{ position: "absolute" as const, top: "100%", left: 0, right: 0, marginTop: 4, background: T.card || "#1a1409", border: `1px solid ${T.border || "#362e1e"}`, borderRadius: 6, maxHeight: 240, overflowY: "auto" as const, zIndex: 50 }}>
+                      {matches.map((m: any) => (
+                        <button key={m.id} type="button" onClick={() => setWalletSendTo(m.un)}
+                          style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 12px", background: "none", border: "none", borderBottom: `1px solid ${T.border || "#362e1e"}`, color: T.text, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                          <span style={{ fontSize: 18, width: 24, textAlign: "center" }}>{m.pic || "🌑"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: T.text, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{m.un}</div>
+                            <div style={{ fontSize: 10, color: T.muted, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{m.handle || `@${m.un.toLowerCase().replace(/\s+/g, "_")}`} · {(m.tier || "").toUpperCase() || "MERIT"}{(m._real || m.isReal) ? " · REAL" : ""}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
               <p style={{ fontSize: 11, color: T.muted, letterSpacing: "0.08em", marginBottom: 4 }}>AMOUNT (₦)</p>
               <input
                 type="number"
