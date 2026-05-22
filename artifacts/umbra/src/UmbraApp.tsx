@@ -1731,9 +1731,25 @@ const PostCard = memo(
 // CLUBS & CHAMPS data (module-level to avoid TDZ)
 // ═══════════════════════════════════════════════════════
 export default function Umbra() {
+  // ── Session-aware initial state — works WITHOUT Supabase being reachable ──
+  // Strategy: if a session exists in localStorage AND we can find the user
+  // either in (a) the in-memory ACCTS (NPC) OR (b) umbra_custom_accts
+  // localStorage (real users from previous signups on this device), then
+  // restore them straight into the app. No Supabase required.
+  //
+  // We also EAGERLY merge umbra_custom_accts into ACCTS right here at module
+  // boot so the uid initializer can find real users immediately.
+  try {
+    const customAccts = JSON.parse(localStorage.getItem("umbra_custom_accts") || "{}");
+    for (const id of Object.keys(customAccts)) {
+      if (!ACCTS[id]) ACCTS[id] = customAccts[id];
+    }
+  } catch {}
+
   const [uid, setUid] = useState<string|null>(() => {
     try {
       const s = JSON.parse(localStorage.getItem("umbra_session") || "{}");
+      // ACCTS now includes both NPCs AND real users from localStorage
       if (s.userId && ACCTS[s.userId]) return s.userId;
     } catch {}
     return null;
@@ -1889,7 +1905,12 @@ export default function Umbra() {
   const [dmConvId, setDmConvId] = useState<string|null>(null);
   const dmConvIdRef = useRef<string|null>(null); // stable ref for use inside loadDms closure
   const msgBottomRef = useRef<HTMLDivElement>(null); // scroll-to-bottom for DM conversation
-  const [dmMessages, setDmMessages] = useState<any[]>([]);
+  const [dmMessages, setDmMessages] = useState<any[]>(() => {
+    // On mount, hydrate from localStorage so DMs survive even when Supabase is
+    // unreachable. We can't read uid yet (it's declared after this state), so
+    // we lazily restore in a useEffect once uid is known (see below).
+    return [];
+  });
   const [dmTxt, setDmTxt] = useState("");
   const [dmSending, setDmSending] = useState(false);
   const [dmTyping, setDmTyping] = useState(false);
@@ -5136,13 +5157,30 @@ export default function Umbra() {
         })();
         return;
       }
-      // 2. Try real API login
+      // 2. Try real API login with up to 3 retries on "Failed to fetch"
+      // (Supabase sometimes drops the first connection; retrying usually
+      //  succeeds within a second or two.)
+      let res: Response | null = null;
+      let lastErr: any = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: lid.trim(), password: lpw.trim() }),
+          });
+          break; // got a response, even if it's an error status — stop retrying
+        } catch (e) {
+          lastErr = e;
+          console.warn(`[login] attempt ${attempt + 1}/3 failed:`, (e as any)?.message || e);
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 800)); // 0.8s backoff
+        }
+      }
+      if (!res) {
+        setLerr(`Couldn't reach the server after 3 tries. Check your internet, disable ad-blockers/privacy extensions if any, or try again in a minute. (${lastErr?.message || "network error"})`);
+        return;
+      }
       try {
-        const res = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: lid.trim(), password: lpw.trim() }),
-        });
         const data = await res.json();
         if (!res.ok) {
           setLerr(data.error || "Invalid credentials.");
@@ -5440,10 +5478,20 @@ export default function Umbra() {
 
   const loadDms = useCallback((silent = false) => {
     if (!uid) return;
+    // ALWAYS load from local cache first so DMs survive Supabase outages.
+    // Then merge any fresh server messages on top.
+    try {
+      const cached = JSON.parse(localStorage.getItem(`umbra_dms_${uid}`) || "[]");
+      if (Array.isArray(cached) && cached.length && !silent) {
+        setDmMessages(cached);
+      }
+    } catch {}
     fetch(`/api/messages/${uid}`, { cache: "no-store" })
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : { messages: [] })
       .then(({ messages }) => {
-        if (!Array.isArray(messages)) return;
+        if (!Array.isArray(messages) || messages.length === 0) return;
+        // Persist server messages locally
+        try { localStorage.setItem(`umbra_dms_${uid}`, JSON.stringify(messages.slice(-500))); } catch {}
         if (!silent) { setDmMessages(messages); return; }
         setDmMessages((prev) => {
           const prevIds = new Set(prev.map((m: any) => m.id));
@@ -5581,6 +5629,29 @@ export default function Umbra() {
     const iv = setInterval(() => loadDms(true), 10 * 60 * 1000); // 10 min (was 2 min)
     return () => clearInterval(iv);
   }, [uid, loadDms]);
+
+  // ── Hydrate DMs from localStorage as soon as we know the uid ──────────────
+  // This is the line of defence against "DMs disappearing": every message the
+  // user has ever sent or received is in localStorage. Even if Supabase is
+  // unreachable, refresh still shows the chat history.
+  useEffect(() => {
+    if (!uid) return;
+    try {
+      const cached = JSON.parse(localStorage.getItem(`umbra_dms_${uid}`) || "[]");
+      if (Array.isArray(cached) && cached.length) {
+        setDmMessages(cached);
+      }
+    } catch {}
+  }, [uid]);
+
+  // ── Auto-persist every DM change to localStorage ──────────────────────────
+  // Any time dmMessages changes (user sent, NPC replied, server synced, etc.)
+  // we write the latest snapshot to localStorage keyed by uid. Capped at 500
+  // most-recent messages per user so storage doesn't explode.
+  useEffect(() => {
+    if (!uid || dmMessages.length === 0) return;
+    try { localStorage.setItem(`umbra_dms_${uid}`, JSON.stringify(dmMessages.slice(-500))); } catch {}
+  }, [uid, dmMessages]);
 
   // ── WORSHIP DM — high-rep users receive adoring DMs from fan NPCs ─────────
   useEffect(() => {
