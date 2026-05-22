@@ -2232,6 +2232,15 @@ export default function Umbra() {
                 ACCTS[realId] = { ...tempAcct, id: realId, _pending: false };
                 delete ACCTS[p.localId];
               }
+              // Persist promoted account to umbra_custom_accts (delete old tempId)
+              try {
+                const saved = JSON.parse(localStorage.getItem("umbra_custom_accts") || "{}");
+                if (saved[p.localId]) {
+                  saved[realId] = { ...saved[p.localId], id: realId, _pending: false };
+                  delete saved[p.localId];
+                  localStorage.setItem("umbra_custom_accts", JSON.stringify(saved));
+                }
+              } catch {}
               try {
                 const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}");
                 if (wb[p.localId] !== undefined) { wb[realId] = wb[p.localId]; delete wb[p.localId]; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); }
@@ -2248,9 +2257,11 @@ export default function Umbra() {
               try {
                 const pwStore = JSON.parse(localStorage.getItem("umbra_pw_store") || "{}");
                 pwStore[realId] = p.password;
+                pwStore[p.username] = p.password;
+                if (pwStore[p.localId]) delete pwStore[p.localId];
                 localStorage.setItem("umbra_pw_store", JSON.stringify(pwStore));
               } catch {}
-              // If the current user IS the one being promoted, swap their uid
+              // If the current user IS the one being promoted, swap their uid + session
               if (uid === p.localId) {
                 setUid(realId);
                 saveSession(realId, "dark");
@@ -5046,6 +5057,7 @@ export default function Umbra() {
     const tempAcct: any = {
       id: tempId,
       un: newUN.trim(), handle: `@${cleanUN}`,
+      pw: newPW.trim(), // CRITICAL: needed so doLogin can match credentials locally
       pic: chosenPic, bio: displayBio, cov, tier, wealth,
       followers: 0, following: 0, gaze: 0, rep: "New Arrival",
       defTheme: "dark", canPost: true, canTheme: true,
@@ -5058,6 +5070,19 @@ export default function Umbra() {
       _real: true, _pending: true,
     };
     ACCTS[tempId] = tempAcct;
+    // Persist to umbra_custom_accts IMMEDIATELY so refresh + cross-tab login works
+    try {
+      const saved = JSON.parse(localStorage.getItem("umbra_custom_accts") || "{}");
+      saved[tempId] = tempAcct;
+      localStorage.setItem("umbra_custom_accts", JSON.stringify(saved));
+    } catch {}
+    // Also persist the password to the canonical store
+    try {
+      const pwStore = JSON.parse(localStorage.getItem("umbra_pw_store") || "{}");
+      pwStore[tempId] = newPW.trim();
+      pwStore[cleanUN] = newPW.trim(); // also keyed by username for cross-tempId lookup
+      localStorage.setItem("umbra_pw_store", JSON.stringify(pwStore));
+    } catch {}
     try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[tempId] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
     setWalletBalance(startBal);
     setAcctVer(v => v + 1);
@@ -5068,6 +5093,7 @@ export default function Umbra() {
     setPendingTags([]);
     setRegError("");
     setScreen("tags");
+    console.log(`[signup] entered app with tempId ${tempId}`);
 
     // Queue the signup as PENDING — the background drain (see useEffect below)
     // will retry every 20s until it succeeds. This survives network glitches,
@@ -5093,6 +5119,15 @@ export default function Umbra() {
           const realAcct: any = { ...tempAcct, id: realId, _pending: false };
           ACCTS[realId] = realAcct;
           delete ACCTS[tempId];
+          // Update umbra_custom_accts: swap tempId entry for realId
+          try {
+            const saved = JSON.parse(localStorage.getItem("umbra_custom_accts") || "{}");
+            if (saved[tempId]) {
+              saved[realId] = { ...saved[tempId], id: realId, _pending: false };
+              delete saved[tempId];
+              localStorage.setItem("umbra_custom_accts", JSON.stringify(saved));
+            }
+          } catch {}
           try {
             const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}");
             if (wb[tempId] !== undefined) { wb[realId] = wb[tempId]; delete wb[tempId]; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); }
@@ -5146,15 +5181,31 @@ export default function Umbra() {
     async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      // 1. Check demo/hardcoded accounts first
+      const lidTrimmed = lid.trim();
+      const lpwTrimmed = lpw.trim();
+      const lidLower = lidTrimmed.toLowerCase();
+      const cleanLid = lidLower.replace(/\s+/g, "_");
+      console.log(`[login] attempt: lid="${lidTrimmed}" cleanLid="${cleanLid}"`);
+      // 1. Check ACCTS (hardcoded NPCs + custom_accts loaded from localStorage)
+      //    Try matching by id, by username (case-insensitive), and by handle.
+      //    Also consult umbra_pw_store as a fallback if the account in ACCTS
+      //    doesn't have a `pw` field (which happens for new optimistic signups).
+      const pwStore: Record<string, string> = (() => {
+        try { return JSON.parse(localStorage.getItem("umbra_pw_store") || "{}"); } catch { return {}; }
+      })();
+      const checkPw = (u: any): boolean => {
+        if (u.pw && u.pw === lpwTrimmed) return true;
+        if (pwStore[u.id] === lpwTrimmed) return true;
+        if (pwStore[cleanLid] === lpwTrimmed) return true;
+        return false;
+      };
       const m =
-        Object.values(ACCTS).find((u: any) => u.pw && u.id === lid && u.pw === lpw) ||
-        Object.values(ACCTS).find(
-          (u: any) => u.pw && u.un.toLowerCase() === lid.toLowerCase() && u.pw === lpw
-        ) ||
-        Object.values(ACCTS).find(
-          (u: any) => u.pw && u.handle && u.handle.replace(/^@/, "").toLowerCase() === lid.replace(/^@/, "").toLowerCase() && u.pw === lpw
-        );
+        Object.values(ACCTS).find((u: any) => u.id === lidTrimmed && checkPw(u)) ||
+        Object.values(ACCTS).find((u: any) => u.un && u.un.toLowerCase() === lidLower && checkPw(u)) ||
+        Object.values(ACCTS).find((u: any) => u.un && u.un.toLowerCase().replace(/\s+/g, "_") === cleanLid && checkPw(u)) ||
+        Object.values(ACCTS).find((u: any) => u.handle && u.handle.replace(/^@/, "").toLowerCase() === lidLower.replace(/^@/, "") && checkPw(u));
+      if (m) console.log(`[login] ✅ matched locally: id=${(m as any).id} un="${(m as any).un}"`);
+      else console.log(`[login] no local match — will try /api/auth/login`);
       if (m) {
         setUid((m as any).id);
         setThemeId((m as any).defTheme || "dark");
