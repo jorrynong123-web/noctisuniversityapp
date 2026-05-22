@@ -3036,6 +3036,47 @@ export default function Umbra() {
   };
 
   const [acctVer, setAcctVer] = useState(0);
+
+  // ── SUPABASE HEALTH CHECK ─────────────────────────────────────────────────
+  // Runs on mount and probes the server. If unreachable, shows a persistent
+  // diagnostic banner so the user knows EXACTLY what's broken and what to do.
+  // Status values:
+  //   "checking" — initial state
+  //   "ok"       — Supabase responded to a SELECT query (full functionality)
+  //   "down"     — Couldn't reach Supabase at all (Failed to fetch / CORS / paused project)
+  //   "auth_off" — Supabase is reachable but auth signups are disabled
+  const [sbStatus, setSbStatus] = useState<"checking" | "ok" | "down" | "auth_off">("checking");
+  const [sbDetail, setSbDetail] = useState<string>("");
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        // 1. Test read access — does the profiles table respond?
+        const t0 = Date.now();
+        const { data, error } = await supabase.from("profiles").select("id").limit(1);
+        const ms = Date.now() - t0;
+        if (cancelled) return;
+        if (error) {
+          console.error("[health] profiles SELECT failed:", error);
+          setSbStatus("down");
+          setSbDetail(`Profiles read failed: ${error.message}`);
+          return;
+        }
+        console.log(`[health] ✅ Supabase reachable in ${ms}ms · ${data?.length ?? 0} profile rows returned`);
+        setSbStatus("ok");
+        setSbDetail(`Connected in ${ms}ms`);
+      } catch (err: any) {
+        if (cancelled) return;
+        console.error("[health] Supabase unreachable:", err?.message || err);
+        setSbStatus("down");
+        setSbDetail(err?.message || "Failed to fetch");
+      }
+    };
+    check();
+    // Re-check every 60s to catch recovery
+    const iv = setInterval(check, 60000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
   const user = useMemo(() => (uid ? ACCTS[uid] : null), [uid, acctVer]);
 
   const picEl = (pic: string | undefined | null, size = 22, style?: React.CSSProperties) => {
@@ -19365,6 +19406,15 @@ export default function Umbra() {
       }}
       onClick={() => setMenuPost(null)}
     >
+      {/* ── Supabase connectivity banner — shown if the server is unreachable ──
+          This tells the user *exactly* why their account isn't going cross-device
+          and other people aren't visible. Auto-hides when connection recovers. */}
+      {sbStatus === "down" && (
+        <div style={{ position: "sticky", top: 0, zIndex: 1000, background: "linear-gradient(90deg, #4a1010, #6a1818)", color: "#ffd0d0", padding: "10px 14px", textAlign: "center" as const, borderBottom: "1px solid #a02020", fontSize: 12, lineHeight: 1.4 }}>
+          ⚠️ <strong>Server unreachable</strong> — cross-device sign-in, seeing other users, and saving posts to the cloud won't work until this clears. {sbDetail}. <br />
+          Common causes: ad-blocker blocking <code>*.supabase.co</code>, privacy extension (uBlock/Brave Shields), or a network firewall. Try a different browser / disable shields and refresh.
+        </div>
+      )}
       {notif && (
         <div
           className="fi"
