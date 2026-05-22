@@ -256,20 +256,22 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
   // ── POSTS ──────────────────────────────────────────────────────────────────
   if (seg[0] === "posts") {
     if (method === "GET" && !seg[1]) {
-      // Single unified query — captures every post regardless of is_npc value
-      // (including NULL, which the previous .eq() pair was silently filtering out).
-      // Limit raised to 300 so the feed has plenty of headroom; the user-post
-      // backup in localStorage covers anything that ages out beyond that.
+      // Single unified query — captures every post regardless of is_npc value.
       const { data: rawPosts, error: pErr } = await sb.from("posts").select("*").order("created_at", { ascending: false }).limit(300);
       if (pErr) return _apiErr(pErr.message);
       const shape = (p: any) => ({ id: p.id, userId: p.user_id, username: p.username, content: p.content, image: p.image, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes || 0, skulls: p.skulls || 0, flames: p.flames || 0, isNpc: p.is_npc, createdAt: p.created_at });
       let posts = (rawPosts || []).map(shape);
       const npcPosts = posts.filter((p: any) => p.isNpc === true);
       const creds = getStoredCreds();
-      // Generate fresh NPC posts ONLY when the feed is genuinely empty.
-      // Previous logic triggered on every refresh when recentNpcCount < 2, which
-      // pushed user posts out of the limited fetch window. Now: just keep a baseline.
-      if (npcPosts.length < 6) {
+      // Generate NPC posts when: (a) the feed has fewer than 10 NPC posts, OR
+      // (b) the most recent NPC post is older than 30 minutes — keeps the
+      // community feeling alive even when no real users have posted lately.
+      // _generateNPCPosts uses templates (FREE AI) when no API key is set,
+      // so this works for every user regardless of their API key settings.
+      const newestNpc = npcPosts[0];
+      const newestNpcAge = newestNpc ? Date.now() - new Date(newestNpc.createdAt).getTime() : Infinity;
+      const shouldGenerate = npcPosts.length < 10 || newestNpcAge > 30 * 60 * 1000;
+      if (shouldGenerate) {
         const aiPosts = await _generateNPCPosts(creds ?? undefined);
         for (const p of aiPosts) {
           try { await sb.from("posts").insert({ id: p.id, user_id: p.user_id, username: p.username, content: p.content, pic: p.pic, covenant: p.covenant, tier: p.tier, likes: p.likes, skulls: p.skulls, flames: p.flames, is_npc: true, created_at: p.created_at }); } catch {}
@@ -2178,8 +2180,82 @@ export default function Umbra() {
     return () => clearTimeout(t);
   }, [regSubmitting]);
 
-  // (Removed pending-signup background drain — signup is now ONLINE-ONLY,
-  //  no local-only accounts get created so there's nothing to sync.)
+  // Background drain — retries pending signups every 20s. When network or
+  // Supabase recovers, the queued account gets created online and the user's
+  // local tempId is silently promoted to the real Supabase UUID. This is what
+  // makes "Failed to fetch" survivable: the user enters the app immediately,
+  // and within ~20s of the network coming back, their account is cross-device.
+  useEffect(() => {
+    let stopped = false;
+    const drain = async () => {
+      if (stopped) return;
+      let pending: any[] = [];
+      try { pending = JSON.parse(localStorage.getItem("umbra_pending_signups") || "[]"); } catch {}
+      if (pending.length === 0) return;
+      const next: any[] = [];
+      for (const p of pending) {
+        if (p.attempts >= 60) continue; // give up after 60 tries (~20min)
+        try {
+          const r = await fetch("/api/auth/signup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: p.username, password: p.password, profile: p.profile }),
+          });
+          if (r.ok) {
+            const data = await r.json().catch(() => ({}));
+            if (data.user?.id && p.localId) {
+              // Promote: replace tempId with real Supabase UUID in all stores
+              const realId = data.user.id;
+              const tempAcct = ACCTS[p.localId];
+              if (tempAcct) {
+                ACCTS[realId] = { ...tempAcct, id: realId, _pending: false };
+                delete ACCTS[p.localId];
+              }
+              try {
+                const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}");
+                if (wb[p.localId] !== undefined) { wb[realId] = wb[p.localId]; delete wb[p.localId]; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); }
+              } catch {}
+              try {
+                const myKey = `umbra_my_posts_${p.localId}`;
+                const backup = JSON.parse(localStorage.getItem(myKey) || "[]");
+                if (backup.length) {
+                  const remapped = backup.map((post: any) => ({ ...post, userId: realId }));
+                  localStorage.setItem(`umbra_my_posts_${realId}`, JSON.stringify(remapped));
+                  localStorage.removeItem(myKey);
+                }
+              } catch {}
+              try {
+                const pwStore = JSON.parse(localStorage.getItem("umbra_pw_store") || "{}");
+                pwStore[realId] = p.password;
+                localStorage.setItem("umbra_pw_store", JSON.stringify(pwStore));
+              } catch {}
+              // If the current user IS the one being promoted, swap their uid
+              if (uid === p.localId) {
+                setUid(realId);
+                saveSession(realId, "dark");
+              }
+              setAcctVer(v => v + 1);
+              console.log(`[drain] ✅ promoted ${p.localId} → ${realId}`);
+              toast("✓ Your account is now synced online. Cross-device login is active.");
+            }
+            continue; // success — drop from queue
+          }
+          if (r.status === 409) {
+            console.log(`[drain] username "${p.username}" taken on server; dropping from queue`);
+            continue;
+          }
+        } catch (err) {
+          console.log(`[drain] attempt ${p.attempts + 1} failed for ${p.username}`);
+        }
+        next.push({ ...p, attempts: (p.attempts || 0) + 1 });
+      }
+      try { localStorage.setItem("umbra_pending_signups", JSON.stringify(next)); } catch {}
+    };
+    // Run after 5s, then every 20s
+    const initial = setTimeout(drain, 5000);
+    const iv = setInterval(drain, 20000);
+    return () => { stopped = true; clearTimeout(initial); clearInterval(iv); };
+  }, [uid, saveSession, toast]);
 
   // One-time migration: bring existing real-user wallets up to tier minimum.
   // Runs whenever `uid` changes (i.e. login/refresh). A localStorage flag
@@ -4927,7 +5003,18 @@ export default function Umbra() {
     setRegError("");
     setScreen("tags");
 
-    // Background Supabase signup — swaps tempId for real UUID on success
+    // Queue the signup as PENDING — the background drain (see useEffect below)
+    // will retry every 20s until it succeeds. This survives network glitches,
+    // Supabase rate limits, "Failed to fetch", etc. Once it succeeds, the temp
+    // uid is promoted to the real Supabase UUID transparently.
+    try {
+      const pending: any[] = JSON.parse(localStorage.getItem("umbra_pending_signups") || "[]");
+      pending.push({ localId: tempId, username: cleanUN, password: newPW.trim(), profile: profileData, attempts: 0, createdAt: Date.now() });
+      localStorage.setItem("umbra_pending_signups", JSON.stringify(pending));
+    } catch {}
+
+    // Try once IMMEDIATELY (so most users get cross-device on first try). If
+    // this attempt fails, the background drain will keep trying.
     fetch("/api/auth/signup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4940,7 +5027,6 @@ export default function Umbra() {
           const realAcct: any = { ...tempAcct, id: realId, _pending: false };
           ACCTS[realId] = realAcct;
           delete ACCTS[tempId];
-          // Migrate wallet, posts backup, etc. from tempId → realId
           try {
             const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}");
             if (wb[tempId] !== undefined) { wb[realId] = wb[tempId]; delete wb[tempId]; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); }
@@ -4964,21 +5050,28 @@ export default function Umbra() {
           setUid(realId);
           saveSession(realId, "dark");
           setAcctVer(v => v + 1);
+          // Remove from pending queue
+          try {
+            const pending: any[] = JSON.parse(localStorage.getItem("umbra_pending_signups") || "[]");
+            const next = pending.filter((p: any) => p.localId !== tempId);
+            localStorage.setItem("umbra_pending_signups", JSON.stringify(next));
+          } catch {}
           console.log(`[signup] ✅ promoted ${tempId} → ${realId}`);
-        } else {
-          // Signup failed — user is already in the app on tempId. They can keep
-          // using it on this device. Show a non-blocking banner so they know.
-          if (res.status === 409 && data.suggestion) {
-            toast(`⚠️ Username "${cleanUN}" was taken on the server. Your account is device-only. Sign out and try "${data.suggestion}" for cross-device.`);
-          } else {
-            toast(`⚠️ Couldn't save your account online — using device-only mode. ${data.error || ""}`);
-          }
-          console.warn("[signup] server rejected, kept tempId:", res.status, data?.error);
+        } else if (res.status === 409 && data.suggestion) {
+          // Username collision — drop from queue, prompt user to change
+          try {
+            const pending: any[] = JSON.parse(localStorage.getItem("umbra_pending_signups") || "[]");
+            const next = pending.filter((p: any) => p.localId !== tempId);
+            localStorage.setItem("umbra_pending_signups", JSON.stringify(next));
+          } catch {}
+          toast(`⚠️ Username "${cleanUN}" was taken. Sign out → try "${data.suggestion}" for cross-device.`);
         }
+        // Any other error: leave in queue, drain will retry
       })
       .catch((err) => {
-        console.warn("[signup] network error, kept tempId:", err?.message || err);
-        toast("⚠️ Couldn't reach the server — account saved on this device only.");
+        // Network / fetch failure — queue stays, drain will retry every 20s.
+        // Log for diagnostics, don't bother the user with a toast.
+        console.warn("[signup] first attempt failed (will auto-retry):", err?.message || err);
       });
   }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, newPronouns, newPicData, academicFocus, personalityTraits, regSubmitting, saveSession, toast]);
 
