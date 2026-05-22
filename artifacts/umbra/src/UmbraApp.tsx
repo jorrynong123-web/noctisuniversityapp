@@ -2714,34 +2714,67 @@ export default function Umbra() {
           }
         }
       } catch {}
-      // 4. Restore session
+      // 4. Restore session — if the user has a saved session, ALWAYS restore it.
+      // If their profile isn't in ACCTS yet, fetch it directly from Supabase
+      // before giving up. This is what makes cross-device + refresh work.
       try {
         const saved = localStorage.getItem("umbra_session");
         if (saved) {
           const { userId, theme: t } = JSON.parse(saved);
-          if (ACCTS[userId]) {
-            setUid(userId);
-            setThemeId(t || ACCTS[userId].defTheme || "dark");
-            setWalletBalance(getInitBal(userId));
-            setScreen("app");
-            // Only use server balance if no local value exists (first login on new device).
-            // localStorage is always current; server syncs every 30 min and would overwrite
-            // recent earnings if used unconditionally on refresh.
-            fetch(`/api/wallet/${userId}`).then(async (r) => {
-              if (r.ok) {
-                const { balance } = await r.json();
-                if (balance !== null && balance !== undefined) {
-                  const localBal = (() => { try { const w = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); return w[userId]; } catch { return undefined; } })();
-                  if (localBal === undefined || localBal === null) {
-                    saveWalletToLS(userId, balance);
-                    setWalletBalance(balance);
+          if (userId) {
+            // Ensure ACCTS has this user — if not, fetch from Supabase
+            if (!ACCTS[userId] && supabase) {
+              try {
+                const { data: prof } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+                if (prof) {
+                  ACCTS[userId] = {
+                    id: prof.id,
+                    un: prof.username,
+                    handle: `@${prof.username}`,
+                    pic: prof.pic || "🌑",
+                    bio: prof.bio || "",
+                    cov: prof.cov || "silk",
+                    tier: prof.tier || "merit",
+                    major: prof.major || "Undeclared",
+                    year: prof.year || "Freshman",
+                    wealth: prof.wealth || "Self-Made",
+                    rep: prof.rep || "New Arrival",
+                    followers: prof.followers || 0,
+                    following: prof.following || 0,
+                    traits: prof.traits || [],
+                    role: "student",
+                    canPost: true, canTheme: true,
+                    defTheme: "dark", badge: "🌑 STUDENT", bColor: "#888",
+                    _real: true, isReal: true,
+                  } as any;
+                  console.log("[init] restored session user from Supabase:", userId);
+                }
+              } catch (err) { console.warn("[init] could not fetch profile for session restore:", err); }
+            }
+            if (ACCTS[userId]) {
+              setUid(userId);
+              setThemeId(t || ACCTS[userId].defTheme || "dark");
+              setWalletBalance(getInitBal(userId));
+              setScreen("app");
+              fetch(`/api/wallet/${userId}`).then(async (r) => {
+                if (r.ok) {
+                  const { balance } = await r.json();
+                  if (balance !== null && balance !== undefined) {
+                    const localBal = (() => { try { const w = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); return w[userId]; } catch { return undefined; } })();
+                    if (localBal === undefined || localBal === null) {
+                      saveWalletToLS(userId, balance);
+                      setWalletBalance(balance);
+                    }
                   }
                 }
-              }
-            }).catch(() => {});
+              }).catch(() => {});
+            } else {
+              console.warn("[init] session has userId but no profile found anywhere; clearing session");
+              try { localStorage.removeItem("umbra_session"); } catch {}
+            }
           }
         }
-      } catch (e) {}
+      } catch (e) { console.warn("[init] session restore failed:", e); }
       // 4. Fetch real posts from API and merge into feed + localStorage
       try {
         const pRes = await _postsFetchP;
@@ -4877,7 +4910,6 @@ export default function Umbra() {
     }
     setRegSubmitting(true);
 
-    // Derived values (computed once, used by both server + local paths)
     const cov = qRes || "shadows";
     const cv = COV[cov];
     let tier = "merit";
@@ -4897,109 +4929,66 @@ export default function Umbra() {
       canSeeRelief: tier === "apex" || tier === "faculty",
     };
 
-    // Wait for Supabase signup with a generous 30s ceiling. Cross-device sign-in
-    // requires the account to actually exist on the server, so we ONLY fall back
-    // to a local account if Supabase truly fails or hits the 30s wall. Most
-    // signups complete in 2-5 seconds; 30s only triggers on real outages.
-    let serverResult: { user: any; token: string } | null = null;
-    let usernameTakenSuggestion: string | null = null;
+    // ONLINE-ONLY. No local fallback. Account MUST be created on Supabase or
+    // user sees an error and retries. This is what makes cross-device + shared
+    // posts + shared chat work — the app is ONLINE-FIRST.
     try {
-      const signupP = fetch("/api/auth/signup", {
+      const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: cleanUN, password: newPW.trim(), profile: profileData }),
-      }).then(async (res) => ({ res, data: await res.json().catch(() => ({})) }));
-      const winner = await Promise.race([
-        signupP,
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 30000)),
-      ]);
-      if (winner) {
-        const { res, data } = winner as any;
-        if (res.ok && data.user?.id) {
-          serverResult = data;
-        } else if (res.status === 409 && data.suggestion) {
-          usernameTakenSuggestion = data.suggestion;
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.user?.id) {
+        if (res.status === 409 && data.suggestion) {
+          setRegError(`Username "${cleanUN}" is already taken. Try: ${data.suggestion}`);
+          setNewUN(data.suggestion);
+        } else if (res.status === 429) {
+          setRegError("Supabase is rate-limiting signups from your network. Wait a few minutes and try again, or sign in to an existing account.");
         } else {
-          console.warn("[finishReg] backend non-OK, falling back to local:", res.status, data?.error);
+          setRegError(data.error || `Signup failed (${res.status}). Please try again.`);
         }
-      } else {
-        console.warn("[finishReg] backend timed out (30s), falling back to local account — background sync will retry");
+        setRegSubmitting(false);
+        return;
       }
-    } catch (err: any) {
-      console.warn("[finishReg] backend threw, falling back to local:", err?.message || err);
-    }
-
-    // If username actually collided, stop and prompt — this is the ONLY hard stop.
-    if (usernameTakenSuggestion) {
-      setRegError(`Username "${cleanUN}" is already taken. Try: ${usernameTakenSuggestion}`);
-      setNewUN(usernameTakenSuggestion);
-      setRegSubmitting(false);
-      return;
-    }
-
-    // Build the account (server-backed OR local-only)
-    let finalId: string;
-    try {
-      if (serverResult) {
-        setJWT(serverResult.token);
-        const acct: any = buildRealUser({ ...serverResult.user, covenant: cov, tier, pic: chosenPic, bio: displayBio });
-        acct.major = newMajor || "Undeclared";
-        acct.year = "Freshman";
-        acct.wealth = wealth;
-        acct.gender = newGender || "prefer_not";
-        acct.quote = newQuote.trim();
-        acct.academicFocus = academicFocus;
-        acct.personality = personalityTraits;
-        acct.canSeeAuction = tier === "apex" || tier === "faculty";
-        acct.canSeeRelief = tier === "apex" || tier === "faculty";
-        acct.un = newUN.trim();
-        acct.name = newUN.trim();
-        acct.handle = `@${cleanUN}`;
-        saveRealUser(acct);
-        finalId = acct.id;
-      } else {
-        // Local-only account
-        const gid = `custom_${cleanUN}_${Date.now()}`;
-        const newAcct: any = {
-          id: gid, un: newUN.trim(), handle: `@${cleanUN}`,
-          pw: newPW.trim(), cov, tier, pic: chosenPic, bio: displayBio,
-          followers: 800 + Math.floor(Math.random() * 400), following: 20 + Math.floor(Math.random() * 80),
-          gaze: 0, wealth, rep: "New Arrival", defTheme: "dark", canPost: true, canTheme: true,
-          badge: `${cv.emoji} ${tier.toUpperCase()}`, bColor: cv.color, cover: cv.emoji,
-          major: newMajor || "Undeclared", year: "Freshman", greek: "None",
-          gender: newGender || "prefer_not", quote: newQuote.trim(),
-          academicFocus, personality: personalityTraits,
-          canSeeAuction: tier === "apex", canSeeRelief: tier === "apex",
-          _real: true,
-        };
-        ACCTS[gid] = newAcct;
-        try { const s = JSON.parse(localStorage.getItem("umbra_custom_accts") || "{}"); s[gid] = newAcct; localStorage.setItem("umbra_custom_accts", JSON.stringify(s)); } catch {}
-        // Queue background retry to sync to Supabase later
-        try {
-          const pendingKey = "umbra_pending_signups";
-          const pending = JSON.parse(localStorage.getItem(pendingKey) || "[]");
-          pending.push({ localId: gid, username: cleanUN, password: newPW.trim(), profile: profileData, attempts: 0, createdAt: Date.now() });
-          localStorage.setItem(pendingKey, JSON.stringify(pending));
-        } catch {}
-        finalId = gid;
-      }
-      try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[finalId] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
+      // SUCCESS — account is on Supabase. Build the user object and enter the app.
+      setJWT(data.token);
+      const acct: any = buildRealUser({ ...data.user, covenant: cov, tier, pic: chosenPic, bio: displayBio });
+      acct.major = newMajor || "Undeclared";
+      acct.year = "Freshman";
+      acct.wealth = wealth;
+      acct.gender = newGender || "prefer_not";
+      acct.quote = newQuote.trim();
+      acct.academicFocus = academicFocus;
+      acct.personality = personalityTraits;
+      acct.canSeeAuction = tier === "apex" || tier === "faculty";
+      acct.canSeeRelief = tier === "apex" || tier === "faculty";
+      acct.un = newUN.trim();
+      acct.name = newUN.trim();
+      acct.handle = `@${cleanUN}`;
+      saveRealUser(acct);
+      // Persist the password locally too so doLogin can use it on this device.
+      // (Supabase auth has its own copy; this is purely for the same-device login
+      //  shortcut that checks ACCTS first before hitting the API.)
+      try {
+        const pwStore = JSON.parse(localStorage.getItem("umbra_pw_store") || "{}");
+        pwStore[acct.id] = newPW.trim();
+        localStorage.setItem("umbra_pw_store", JSON.stringify(pwStore));
+      } catch {}
+      try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[acct.id] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
       setWalletBalance(startBal);
       setAcctVer(v => v + 1);
-
-      // ENTER THE APP — guaranteed to run as long as account creation didn't throw
-      setUid(finalId);
+      setUid(acct.id);
       setThemeId("dark");
-      saveSession(finalId, "dark");
+      saveSession(acct.id, "dark");
       setShowWelcome(true);
       setPendingTags([]);
       setRegError("");
       setScreen("tags");
-    } catch (buildErr: any) {
-      console.error("[finishReg] account build failed:", buildErr?.message || buildErr);
-      setRegError("Something went wrong creating your account. Try again.");
+    } catch (err: any) {
+      console.error("[finishReg] network error:", err?.message || err);
+      setRegError("Could not reach the server. Check your internet connection and try again.");
     } finally {
-      // GUARANTEED — button never stays disabled, no matter what happened above
       setRegSubmitting(false);
     }
   }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, newPronouns, newPicData, academicFocus, personalityTraits, regSubmitting, saveSession]);
@@ -5635,19 +5624,28 @@ export default function Umbra() {
     };
     setDmMessages((p) => [...p, optimisticMsg]);
     setDmTxt("");
-    try {
-      const r = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const { message } = await r.json();
-      if (message) {
-        // Replace the optimistic message with the server-saved one
-        setDmMessages((p) => {
-          const filtered = p.filter((m: any) => m.id !== optimisticMsg.id);
-          const ids = new Set(filtered.map((x: any) => x.id));
-          return ids.has(message.id) ? filtered : [...filtered, message];
-        });
-      }
 
-      if (convUser && !convUser._real && (convUser.autoReply || convUser.personality)) {
+    // Fire the user-message POST in the background — don't await it. The AI
+    // reply path below runs IMMEDIATELY and in parallel, so even if /api/messages
+    // is slow or fails, the NPC still responds.
+    fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      .then(async (r) => {
+        try {
+          const { message } = await r.json();
+          if (message) {
+            setDmMessages((p) => {
+              const filtered = p.filter((m: any) => m.id !== optimisticMsg.id);
+              const ids = new Set(filtered.map((x: any) => x.id));
+              return ids.has(message.id) ? filtered : [...filtered, message];
+            });
+          }
+        } catch {}
+      })
+      .catch((err) => console.warn("[sendDm] message POST failed (kept optimistic):", err));
+
+    try {
+      // AI reply fires regardless of message-POST status. NPC must always reply.
+      if (convUser && (convUser.autoReply || convUser.personality) && !convUser._real && !convUser.isReal) {
         if (capturedConvId === "trent_morrison") addTrentPoints(uid, 1);
         if (capturedConvId === "cyrus_whitmore") addCyrusPoints(uid, 1);
         // Filter history to THIS conversation only (fixes memory bug), sorted oldest-first
@@ -5818,8 +5816,9 @@ export default function Umbra() {
       if (!r.ok) { toast("Failed to send image."); return; }
       const { message } = await r.json();
       if (message) setDmMessages((p) => [...p, { ...message, imageUrl }]);
-      if (convUser && !convUser._real && (convUser.autoReply || convUser.personality)) {
+      if (convUser && (convUser.autoReply || convUser.personality) && !convUser._real && !convUser.isReal) {
         if (capturedConvId === "trent_morrison") addTrentPoints(uid, 1);
+        if (capturedConvId === "cyrus_whitmore") addCyrusPoints(uid, 1);
         const recentHistory = dmMessages
           .filter((m: any) => m.fromId === capturedConvId || m.toId === capturedConvId)
           .slice(-14);
@@ -5828,10 +5827,14 @@ export default function Umbra() {
                        : 0;
         const capturedMemory = capturedConvId === "trent_morrison" ? trentMemory : "";
         setDmTyping(true);
+        // Tell the AI explicitly that a photo was sent so it reacts in character.
+        // The user's chatStyle + the "they sent you a photo" instruction makes
+        // Cyrus stutter / Trent get terse without action-narration.
+        const picUserMsg = `[The user just sent you a photo of themself. React to receiving it — keep it as a text message, no action narration.]`;
         fetch("/api/ai/npc-reply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: "📷 [sent a photo]", username: user.un, relLevel, trentMemory: capturedMemory, ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}) }),
+          body: JSON.stringify({ npcId: capturedConvId, npcProfile: convUser, history: recentHistory, userMessage: picUserMsg, username: user.un, relLevel, trentMemory: capturedMemory, ...(hasUserAiKey ? { userApiBase: aiApiBase, userApiKey: aiApiKey, userModel: aiModel } : {}) }),
         })
           .then(r2 => r2.json())
           .then(async ({ reply: rawReply2 }) => {
