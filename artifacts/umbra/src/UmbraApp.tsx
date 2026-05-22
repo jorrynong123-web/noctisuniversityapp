@@ -345,7 +345,9 @@ async function _supabaseHandler(method: string, seg: string[], query: URLSearchP
   if (seg[0] === "users") {
     if (method === "GET" && !seg[1]) {
       const q = query.get("q") || "";
-      const limit = Math.min(parseInt(query.get("limit") || "200"), 500);
+      // Generous cap — we want ALL real users to be visible cross-device so
+      // people can find and DM each other globally.
+      const limit = Math.min(parseInt(query.get("limit") || "2000"), 5000);
       const npcUsers = (Object.values(ACCTS) as any[])
         .filter((u: any) => !u.isGuest && u.un && (!q || u.un.toLowerCase().includes(q.toLowerCase())))
         .slice(0, limit)
@@ -2176,45 +2178,8 @@ export default function Umbra() {
     return () => clearTimeout(t);
   }, [regSubmitting]);
 
-  // Background drain for any "pending signups" — accounts that were created
-  // locally during a Supabase outage / rate-limit. Retries the real signup
-  // every 60s so they end up on the server once the network clears.
-  useEffect(() => {
-    let stopped = false;
-    const drain = async () => {
-      if (stopped) return;
-      let pending: any[] = [];
-      try { pending = JSON.parse(localStorage.getItem("umbra_pending_signups") || "[]"); } catch {}
-      if (pending.length === 0) return;
-      const next: any[] = [];
-      for (const p of pending) {
-        if (p.attempts >= 30) continue; // give up after 30 tries (~30min)
-        try {
-          const ctrl = new AbortController();
-          const t = setTimeout(() => ctrl.abort(), 7000);
-          const r = await fetch("/api/auth/signup", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: p.username, password: p.password, profile: p.profile }),
-            signal: ctrl.signal,
-          });
-          clearTimeout(t);
-          if (r.ok) {
-            console.log("[pending-signup] synced", p.username);
-            continue; // success — don't keep in queue
-          }
-          // 409 = duplicate username (someone else took it) — drop
-          if (r.status === 409) { console.log("[pending-signup] username taken, dropping", p.username); continue; }
-        } catch {}
-        next.push({ ...p, attempts: (p.attempts || 0) + 1 });
-      }
-      try { localStorage.setItem("umbra_pending_signups", JSON.stringify(next)); } catch {}
-    };
-    // Run immediately on mount, then every 60s
-    drain();
-    const iv = setInterval(drain, 60000);
-    return () => { stopped = true; clearInterval(iv); };
-  }, []);
+  // (Removed pending-signup background drain — signup is now ONLINE-ONLY,
+  //  no local-only accounts get created so there's nothing to sync.)
 
   // One-time migration: bring existing real-user wallets up to tier minimum.
   // Runs whenever `uid` changes (i.e. login/refresh). A localStorage flag
@@ -2650,7 +2615,7 @@ export default function Umbra() {
     const init = async () => {
       // Kick off network fetches immediately — they run in parallel with sync localStorage work
       const _postsFetchP = fetch("/api/posts", { cache: "no-store" });
-      const _usersFetchP = fetch("/api/users?q=&limit=200", { cache: "no-store" });
+      const _usersFetchP = fetch("/api/users?q=&limit=2000", { cache: "no-store" });
       // 1. Load shared accounts from localStorage
       try {
         const aVal = localStorage.getItem(RT_ACCTS_KEY);
@@ -4908,7 +4873,6 @@ export default function Umbra() {
       setRegError("Please fill in your username and password before continuing.");
       return;
     }
-    setRegSubmitting(true);
 
     const cov = qRes || "shadows";
     const cv = COV[cov];
@@ -4929,69 +4893,94 @@ export default function Umbra() {
       canSeeRelief: tier === "apex" || tier === "faculty",
     };
 
-    // ONLINE-ONLY. No local fallback. Account MUST be created on Supabase or
-    // user sees an error and retries. This is what makes cross-device + shared
-    // posts + shared chat work — the app is ONLINE-FIRST.
-    try {
-      const res = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: cleanUN, password: newPW.trim(), profile: profileData }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.user?.id) {
-        if (res.status === 409 && data.suggestion) {
-          setRegError(`Username "${cleanUN}" is already taken. Try: ${data.suggestion}`);
-          setNewUN(data.suggestion);
-        } else if (res.status === 429) {
-          setRegError("Supabase is rate-limiting signups from your network. Wait a few minutes and try again, or sign in to an existing account.");
+    // ═══════════════════════════════════════════════════════════════════════
+    // INSTANT-ENTRY (optimistic UI). User clicks → immediately navigates to
+    // tags screen with a temporary local uid. Supabase signup runs in the
+    // background. When it finishes, we swap the temp id for the real
+    // Supabase UUID transparently. By the time the user has finished picking
+    // tags (~5-10s), the background signup is virtually always complete.
+    // ═══════════════════════════════════════════════════════════════════════
+    const tempId = `pending_${cleanUN}_${Date.now()}`;
+    const tempAcct: any = {
+      id: tempId,
+      un: newUN.trim(), handle: `@${cleanUN}`,
+      pic: chosenPic, bio: displayBio, cov, tier, wealth,
+      followers: 0, following: 0, gaze: 0, rep: "New Arrival",
+      defTheme: "dark", canPost: true, canTheme: true,
+      badge: `${cv.emoji} ${tier.toUpperCase()}`, bColor: cv.color, cover: cv.emoji,
+      major: newMajor || "Undeclared", year: "Freshman",
+      gender: newGender || "prefer_not", quote: newQuote.trim(),
+      academicFocus, personality: personalityTraits,
+      canSeeAuction: tier === "apex" || tier === "faculty",
+      canSeeRelief: tier === "apex" || tier === "faculty",
+      _real: true, _pending: true,
+    };
+    ACCTS[tempId] = tempAcct;
+    try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[tempId] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
+    setWalletBalance(startBal);
+    setAcctVer(v => v + 1);
+    setUid(tempId);
+    setThemeId("dark");
+    saveSession(tempId, "dark");
+    setShowWelcome(true);
+    setPendingTags([]);
+    setRegError("");
+    setScreen("tags");
+
+    // Background Supabase signup — swaps tempId for real UUID on success
+    fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: cleanUN, password: newPW.trim(), profile: profileData }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.user?.id) {
+          const realId = data.user.id;
+          const realAcct: any = { ...tempAcct, id: realId, _pending: false };
+          ACCTS[realId] = realAcct;
+          delete ACCTS[tempId];
+          // Migrate wallet, posts backup, etc. from tempId → realId
+          try {
+            const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}");
+            if (wb[tempId] !== undefined) { wb[realId] = wb[tempId]; delete wb[tempId]; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); }
+          } catch {}
+          try {
+            const myKey = `umbra_my_posts_${tempId}`;
+            const backup = JSON.parse(localStorage.getItem(myKey) || "[]");
+            if (backup.length) {
+              const remapped = backup.map((p: any) => ({ ...p, userId: realId }));
+              localStorage.setItem(`umbra_my_posts_${realId}`, JSON.stringify(remapped));
+              localStorage.removeItem(myKey);
+            }
+          } catch {}
+          saveRealUser(realAcct);
+          try {
+            const pwStore = JSON.parse(localStorage.getItem("umbra_pw_store") || "{}");
+            pwStore[realId] = newPW.trim();
+            localStorage.setItem("umbra_pw_store", JSON.stringify(pwStore));
+          } catch {}
+          setJWT(data.token);
+          setUid(realId);
+          saveSession(realId, "dark");
+          setAcctVer(v => v + 1);
+          console.log(`[signup] ✅ promoted ${tempId} → ${realId}`);
         } else {
-          setRegError(data.error || `Signup failed (${res.status}). Please try again.`);
+          // Signup failed — user is already in the app on tempId. They can keep
+          // using it on this device. Show a non-blocking banner so they know.
+          if (res.status === 409 && data.suggestion) {
+            toast(`⚠️ Username "${cleanUN}" was taken on the server. Your account is device-only. Sign out and try "${data.suggestion}" for cross-device.`);
+          } else {
+            toast(`⚠️ Couldn't save your account online — using device-only mode. ${data.error || ""}`);
+          }
+          console.warn("[signup] server rejected, kept tempId:", res.status, data?.error);
         }
-        setRegSubmitting(false);
-        return;
-      }
-      // SUCCESS — account is on Supabase. Build the user object and enter the app.
-      setJWT(data.token);
-      const acct: any = buildRealUser({ ...data.user, covenant: cov, tier, pic: chosenPic, bio: displayBio });
-      acct.major = newMajor || "Undeclared";
-      acct.year = "Freshman";
-      acct.wealth = wealth;
-      acct.gender = newGender || "prefer_not";
-      acct.quote = newQuote.trim();
-      acct.academicFocus = academicFocus;
-      acct.personality = personalityTraits;
-      acct.canSeeAuction = tier === "apex" || tier === "faculty";
-      acct.canSeeRelief = tier === "apex" || tier === "faculty";
-      acct.un = newUN.trim();
-      acct.name = newUN.trim();
-      acct.handle = `@${cleanUN}`;
-      saveRealUser(acct);
-      // Persist the password locally too so doLogin can use it on this device.
-      // (Supabase auth has its own copy; this is purely for the same-device login
-      //  shortcut that checks ACCTS first before hitting the API.)
-      try {
-        const pwStore = JSON.parse(localStorage.getItem("umbra_pw_store") || "{}");
-        pwStore[acct.id] = newPW.trim();
-        localStorage.setItem("umbra_pw_store", JSON.stringify(pwStore));
-      } catch {}
-      try { const wb = JSON.parse(localStorage.getItem("umbra_wallets") || "{}"); wb[acct.id] = startBal; localStorage.setItem("umbra_wallets", JSON.stringify(wb)); } catch {}
-      setWalletBalance(startBal);
-      setAcctVer(v => v + 1);
-      setUid(acct.id);
-      setThemeId("dark");
-      saveSession(acct.id, "dark");
-      setShowWelcome(true);
-      setPendingTags([]);
-      setRegError("");
-      setScreen("tags");
-    } catch (err: any) {
-      console.error("[finishReg] network error:", err?.message || err);
-      setRegError("Could not reach the server. Check your internet connection and try again.");
-    } finally {
-      setRegSubmitting(false);
-    }
-  }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, newPronouns, newPicData, academicFocus, personalityTraits, regSubmitting, saveSession]);
+      })
+      .catch((err) => {
+        console.warn("[signup] network error, kept tempId:", err?.message || err);
+        toast("⚠️ Couldn't reach the server — account saved on this device only.");
+      });
+  }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, newPronouns, newPicData, academicFocus, personalityTraits, regSubmitting, saveSession, toast]);
 
   // ── LOGIN ──
   const doLogin = useCallback(
@@ -5668,20 +5657,35 @@ export default function Umbra() {
           .then(r2 => r2.json())
           .then(async ({ reply: rawReply }) => {
             clearTimeout(timeoutId);
-            // Never silently drop — fall back to a short in-character line if the LLM returned nothing
-            // Fall back to the right reply pool (and level) for each affinity character.
             const reply = rawReply || (capturedConvId === "trent_morrison"
               ? (getTrentReplyPool(trentRel[uid] || 0)[Math.floor(Math.random() * 5)] || ".")
               : capturedConvId === "cyrus_whitmore"
               ? (getCyrusReplyPool(cyrusRel[uid] || 0)[Math.floor(Math.random() * 5)] || "...")
               : "...");
+            // OPTIMISTIC — show the NPC reply IMMEDIATELY. The /api/messages
+            // POST runs in the background; user doesn't wait for it.
+            const optimisticReply = {
+              id: `local_npc_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
+              fromId: capturedConvId, fromUsername: convUser.un, fromPic: convUser.pic || "🌑",
+              toId: uid, toUsername: user.un, text: reply,
+              createdAt: new Date().toISOString(),
+              _optimistic: true,
+            };
+            setDmMessages((p) => [...p, optimisticReply]);
+            // Background save — replace optimistic with server-saved entry when it returns
             const autoPayload = { fromId: capturedConvId, fromUsername: convUser.un, fromPic: convUser.pic || "🌑", toId: uid, toUsername: user.un, text: reply };
-            const ar = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoPayload) });
-            const { message: autoMsg } = await ar.json();
-            if (autoMsg) setDmMessages((p) => {
-              const ids = new Set(p.map((x: any) => x.id));
-              return ids.has(autoMsg.id) ? p : [...p, autoMsg];
-            });
+            fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoPayload) })
+              .then(async (ar) => {
+                try {
+                  const { message: autoMsg } = await ar.json();
+                  if (autoMsg) setDmMessages((p) => {
+                    const filtered = p.filter((m: any) => m.id !== optimisticReply.id);
+                    const ids = new Set(filtered.map((x: any) => x.id));
+                    return ids.has(autoMsg.id) ? filtered : [...filtered, autoMsg];
+                  });
+                } catch {}
+              })
+              .catch((err) => console.warn("[sendDm] reply save failed (kept optimistic):", err));
             // Fire-and-forget: update Trent's long-term memory after each exchange
             if (capturedConvId === "trent_morrison" && uid) {
               const lastExchange = [
@@ -6747,24 +6751,13 @@ export default function Umbra() {
                   </div>
                 )}
                 <button type="button" className="b"
-                  disabled={regSubmitting}
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); finishReg(); }}
-                  style={{ ...btn(true), padding: "14px", fontSize: 15, letterSpacing: "0.15em", opacity: regSubmitting ? 0.6 : 1, cursor: regSubmitting ? "wait" : "pointer" }}>
-                  {regSubmitting ? "ENTERING…" : "ENTER NOCTIS"}
+                  style={{ ...btn(true), padding: "14px", fontSize: 15, letterSpacing: "0.15em", cursor: "pointer" }}>
+                  ENTER NOCTIS
                 </button>
                 <p style={{ fontSize: 11, color: "#6a5840", textAlign: "center", marginTop: 8, fontFamily: "'IM Fell English',serif", fontStyle: "italic" }}>
-                  {regSubmitting ? "Creating your account on the server… (can take up to 30 s)" : "The shadows await your arrival."}
+                  The shadows await your arrival.
                 </p>
-                {/* Emergency escape hatch: if the user is stuck on ENTERING they can
-                    bail out manually and try again with a different username, or use
-                    offline mode. */}
-                {regSubmitting && (
-                  <button type="button"
-                    onClick={(e) => { e.preventDefault(); setRegSubmitting(false); setRegError("Cancelled. Try again or change your username."); }}
-                    style={{ marginTop: 10, background: "none", border: "1px solid #5a4a32", color: "#9a8868", padding: "8px 18px", borderRadius: 6, fontSize: 11, cursor: "pointer", fontFamily: "'Cormorant Garamond',serif", letterSpacing: "0.08em" }}>
-                    Cancel — try again
-                  </button>
-                )}
               </div>
             )}
         </div>
