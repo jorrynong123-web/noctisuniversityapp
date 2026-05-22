@@ -5105,6 +5105,9 @@ export default function Umbra() {
       localStorage.setItem("umbra_pending_signups", JSON.stringify(pending));
     } catch {}
 
+    // Show a toast immediately so user knows the signup is in progress
+    toast("⏳ Syncing your account to the server…");
+
     // Try once IMMEDIATELY (so most users get cross-device on first try). If
     // this attempt fails, the background drain will keep trying.
     fetch("/api/auth/signup", {
@@ -5158,6 +5161,7 @@ export default function Umbra() {
             localStorage.setItem("umbra_pending_signups", JSON.stringify(next));
           } catch {}
           console.log(`[signup] ✅ promoted ${tempId} → ${realId}`);
+          toast("✅ Account synced online! Cross-device login is active.");
         } else if (res.status === 409 && data.suggestion) {
           // Username collision — drop from queue, prompt user to change
           try {
@@ -5166,13 +5170,16 @@ export default function Umbra() {
             localStorage.setItem("umbra_pending_signups", JSON.stringify(next));
           } catch {}
           toast(`⚠️ Username "${cleanUN}" was taken. Sign out → try "${data.suggestion}" for cross-device.`);
+        } else {
+          // Other backend error (auth disabled, schema mismatch, etc.) — make VISIBLE
+          console.error("[signup] ❌ backend rejected:", res.status, data);
+          toast(`❌ Sync failed (HTTP ${res.status}): ${data.error || "unknown server error"}. Account is local-only. Check Settings → Diagnostics.`);
         }
-        // Any other error: leave in queue, drain will retry
       })
       .catch((err) => {
         // Network / fetch failure — queue stays, drain will retry every 20s.
-        // Log for diagnostics, don't bother the user with a toast.
-        console.warn("[signup] first attempt failed (will auto-retry):", err?.message || err);
+        console.error("[signup] ❌ network failure:", err?.message || err);
+        toast(`❌ Couldn't reach server: ${err?.message || "unknown"}. Will keep retrying. Open Settings → Diagnostics to see why.`);
       });
   }, [qRes, apexScore, newUN, newPW, newMajor, newBio, newQuote, newGender, newPronouns, newPicData, academicFocus, personalityTraits, regSubmitting, saveSession, toast]);
 
@@ -18617,6 +18624,43 @@ export default function Umbra() {
         </div>
       </div>
       <div style={sec}>
+        {/* ── DIAGNOSTICS ── shows server connectivity + account sync status */}
+        <div style={{ ...card, padding: 14, marginBottom: 12, border: `1px solid ${sbStatus === "ok" ? "#3c8c3c" : sbStatus === "down" ? "#a02020" : "#5a4a32"}` }}>
+          <p style={{ ...lbl, marginBottom: 10 }}>🩺 DIAGNOSTICS</p>
+          <div style={{ display: "grid", gap: 6, fontSize: 12, fontFamily: "monospace" }}>
+            <div>Server status: <strong style={{ color: sbStatus === "ok" ? "#7ac47a" : sbStatus === "down" ? "#e87878" : "#c8b896" }}>{sbStatus === "ok" ? "✅ Connected" : sbStatus === "down" ? "❌ Unreachable" : "⏳ Checking…"}</strong></div>
+            <div>Detail: <span style={{ color: T.muted }}>{sbDetail || "(none yet)"}</span></div>
+            <div>Your account ID: <span style={{ color: uid?.startsWith("pending_") ? "#e8b878" : uid?.startsWith("custom_") ? "#e87878" : "#7ac47a" }}>{uid || "(not logged in)"}</span></div>
+            <div>Account type: <span style={{ color: T.muted }}>{uid?.startsWith("pending_") ? "⏳ Local — waiting to sync to Supabase" : uid?.startsWith("custom_") ? "⚠️ Local-only (legacy, won't go cross-device)" : "✅ Server-backed (cross-device works)"}</span></div>
+            <div>Pending sync queue: <span style={{ color: T.muted }}>{(() => { try { return JSON.parse(localStorage.getItem("umbra_pending_signups") || "[]").length; } catch { return "?"; } })()} signup(s) waiting</span></div>
+          </div>
+          <button type="button" onClick={async () => {
+            toast("Running diagnostics…");
+            try {
+              const t0 = Date.now();
+              const { count, error: cErr } = await supabase.from("profiles").select("*", { count: "exact", head: true });
+              const ms = Date.now() - t0;
+              if (cErr) {
+                toast(`❌ profiles SELECT failed: ${cErr.message}`);
+                console.error("[diag] profiles error:", cErr);
+                return;
+              }
+              const { data: sample } = await supabase.from("profiles").select("id,username,cov,tier").limit(5);
+              console.log("[diag] sample profiles:", sample);
+              toast(`✅ ${count} profile(s) on Supabase in ${ms}ms. See console for sample.`);
+            } catch (err: any) {
+              toast(`❌ Diagnostic FAILED: ${err?.message || err}. Server unreachable from this browser.`);
+              console.error("[diag] threw:", err);
+            }
+          }} style={{ ...btn(true), width: "100%", padding: "10px", marginTop: 10, fontSize: 12 }}>
+            🩺 RUN SUPABASE DIAGNOSTICS
+          </button>
+          {sbStatus === "down" && (
+            <p style={{ fontSize: 11, color: "#e87878", marginTop: 8, lineHeight: 1.5 }}>
+              ⚠ Cross-device sign-in and seeing other users won't work until the server is reachable. Common causes: <strong>ad-blocker/uBlock/Brave Shields blocking *.supabase.co</strong>, browser privacy extension, or network firewall. Try a different browser or disable shields.
+            </p>
+          )}
+        </div>
         {user.isAdmin && (
           <div style={{ ...card, padding: 14, marginBottom: 12, border: "1px solid #cc44ff44" }}>
             <p style={{ ...lbl, color: "#cc44ff", marginBottom: 8 }}>⚡ ADMIN — ADD FUNDS</p>
