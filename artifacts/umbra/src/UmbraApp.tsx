@@ -2255,7 +2255,11 @@ export default function Umbra() {
     const initial = setTimeout(drain, 5000);
     const iv = setInterval(drain, 20000);
     return () => { stopped = true; clearTimeout(initial); clearInterval(iv); };
-  }, [uid, saveSession, toast]);
+    // Empty deps on purpose — saveSession + toast + setUid are stable (declared
+    // later in the component, would trigger a TDZ ReferenceError if included).
+    // The drain reads uid via the current setter closure when it promotes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // One-time migration: bring existing real-user wallets up to tier minimum.
   // Runs whenever `uid` changes (i.e. login/refresh). A localStorage flag
